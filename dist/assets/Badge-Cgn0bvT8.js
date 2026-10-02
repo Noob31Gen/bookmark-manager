@@ -1,4 +1,4 @@
-import{c as d,n as C,r as k,j as l,B as D,a as I}from"./index-ClnYSvr6.js";import{v as L,w as j}from"./chromeBookmarks-DWTnncBQ.js";/**
+import{c as d,n as C,r as k,j as l,B as D,a as I}from"./index-CnU33Zkq.js";import{v as L,w as j}from"./chromeBookmarks-DWTnncBQ.js";/**
  * @license lucide-react v1.49.0 - ISC
  *
  * This source code is licensed under the ISC license.

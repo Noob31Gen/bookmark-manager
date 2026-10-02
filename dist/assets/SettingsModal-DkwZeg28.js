@@ -1,4 +1,4 @@
-import{c as i,r as p,j as e,I as y,B as x}from"./index-ClnYSvr6.js";import{t as re,s as ne,p as oe}from"./githubSync-CRUxpmSg.js";import{g as I,e as le,o as ce,p as ie,f as de,q as A,r as me}from"./chromeBookmarks-DWTnncBQ.js";import{M as pe,S as xe,E as ue,R as he}from"./Modal-Bo3_eAfx.js";/**
+import{c as i,r as p,j as e,I as y,B as x}from"./index-CnU33Zkq.js";import{t as re,s as ne,p as oe}from"./githubSync-CRUxpmSg.js";import{g as I,e as le,o as ce,p as ie,f as de,q as A,r as me}from"./chromeBookmarks-DWTnncBQ.js";import{M as pe,S as xe,E as ue,R as he}from"./Modal-Bm_1JdHg.js";/**
  * @license lucide-react v1.49.0 - ISC
  *
  * This source code is licensed under the ISC license.

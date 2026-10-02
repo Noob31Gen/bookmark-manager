@@ -31,10 +31,22 @@ export async function fetchLivePageDetails(
     };
   }
 
+  if (signal?.aborted) {
+    throw new DOMException("Operation aborted", "AbortError");
+  }
+
   const timeoutController = new AbortController();
   const timeoutId = setTimeout(() => timeoutController.abort(), 12000); // 12s timeout
 
-  const effectiveSignal = signal || timeoutController.signal;
+  let userAborted = false;
+  const onUserAbort = () => {
+    userAborted = true;
+    timeoutController.abort();
+  };
+
+  if (signal) {
+    signal.addEventListener("abort", onUserAbort, { once: true });
+  }
 
   try {
     const res = await fetch(url, {
@@ -42,10 +54,13 @@ export async function fetchLivePageDetails(
       headers: {
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       },
-      signal: effectiveSignal,
+      signal: timeoutController.signal,
     });
 
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener("abort", onUserAbort);
+    }
 
     const httpStatus = res.status;
     const httpStatusText = res.statusText || (httpStatus === 200 ? "OK" : `HTTP ${httpStatus}`);
@@ -184,6 +199,15 @@ export async function fetchLivePageDetails(
     };
   } catch (err: any) {
     clearTimeout(timeoutId);
+    if (signal) {
+      signal.removeEventListener("abort", onUserAbort);
+    }
+
+    // If aborted by user, rethrow so caller can terminate immediately without saving 408 errors
+    if (userAborted || signal?.aborted) {
+      throw new DOMException("Operation aborted by user", "AbortError");
+    }
+
     const isTimeout = err.name === "AbortError";
     return {
       url,
@@ -203,7 +227,7 @@ export async function runBatchRefetch(
   },
   onProgress: (progress: BatchFetchProgress) => void,
   abortSignal?: AbortSignal
-): Promise<{ processed: number; success: number; errors: number; skipped: number }> {
+): Promise<{ processed: number; success: number; errors: number; skipped: number; aborted: boolean }> {
   const { fetchScope, skip200OnRefetch, concurrency = 4 } = options;
 
   let current = 0;
@@ -213,6 +237,7 @@ export async function runBatchRefetch(
   const total = bookmarks.length;
 
   const updateUI = (title = "", url = "") => {
+    if (abortSignal?.aborted) return;
     onProgress({
       isRunning: true,
       total,
@@ -227,7 +252,7 @@ export async function runBatchRefetch(
 
   updateUI("Starting refetch...", "");
 
-  // Filter items if skip200 is enabled
+  // Prepare queue
   const queue: EnhancedBookmark[] = [];
   for (const b of bookmarks) {
     if (skip200OnRefetch && b.httpStatus === 200 && b.favicon) {
@@ -248,10 +273,13 @@ export async function runBatchRefetch(
       const item = queue.shift();
       if (!item || !item.url) continue;
 
+      if (abortSignal?.aborted) break;
       updateUI(item.title, item.url);
 
       try {
         const result = await fetchLivePageDetails(item.url, fetchScope, abortSignal);
+
+        if (abortSignal?.aborted) break;
 
         const updates: Partial<BookmarkMetadata> = {
           httpStatus: result.httpStatus,
@@ -281,11 +309,17 @@ export async function runBatchRefetch(
         } else {
           errorCount++;
         }
-      } catch {
-        errorCount++;
-      } finally {
         current++;
-        updateUI(item.title, item.url);
+      } catch (err: any) {
+        if (abortSignal?.aborted || err.name === "AbortError") {
+          break;
+        }
+        errorCount++;
+        current++;
+      } finally {
+        if (!abortSignal?.aborted) {
+          updateUI(item.title, item.url);
+        }
       }
     }
   }
@@ -293,11 +327,13 @@ export async function runBatchRefetch(
   const workers = Array.from({ length: Math.min(concurrency, queue.length || 1) }, () => worker());
   await Promise.all(workers);
 
+  const wasAborted = !!abortSignal?.aborted;
+
   onProgress({
     isRunning: false,
     total,
     current,
-    currentTitle: "Completed",
+    currentTitle: wasAborted ? "Stopped" : "Completed",
     currentUrl: "",
     successCount,
     errorCount,
@@ -309,5 +345,6 @@ export async function runBatchRefetch(
     success: successCount,
     errors: errorCount,
     skipped: skippedCount,
+    aborted: wasAborted,
   };
 }

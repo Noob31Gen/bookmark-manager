@@ -405,7 +405,22 @@ export function ManagerApp() {
   const executeRefetch = async (targets: EnhancedBookmark[]) => {
     if (targets.length === 0) return;
 
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
     abortControllerRef.current = new AbortController();
+
+    // Reset progress completely so each run starts clean from 0
+    setRefetchProgress({
+      isRunning: true,
+      total: targets.length,
+      current: 0,
+      currentTitle: "Starting refetch...",
+      currentUrl: "",
+      successCount: 0,
+      errorCount: 0,
+      skippedCount: 0,
+    });
     setRefetchModalOpen(true);
 
     try {
@@ -455,7 +470,20 @@ export function ManagerApp() {
   const handleCancelRefetch = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
+    setRefetchProgress({
+      isRunning: false,
+      total: 0,
+      current: 0,
+      currentTitle: "Stopped",
+      currentUrl: "",
+      successCount: 0,
+      errorCount: 0,
+      skippedCount: 0,
+    });
+    setRefetchModalOpen(false);
+    refreshData();
   };
 
   // Individual bookmark actions
