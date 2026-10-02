@@ -77,25 +77,25 @@ export function BrowseModeModal({
       subtitle={`Expanded Inspector • ${domain}`}
       maxWidth="max-w-4xl"
     >
-      <div className="space-y-6">
+      <div className="space-y-4 sm:space-y-6">
         {/* Top Header Card */}
-        <div className="border border-border bg-card p-5 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-            <div className="flex items-start gap-3 flex-1 min-w-0">
+        <div className="border border-border bg-card p-3.5 sm:p-5 space-y-3 sm:space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 sm:gap-4">
+            <div className="flex items-start gap-2.5 sm:gap-3 flex-1 min-w-0">
               {bookmark.favicon ? (
                 <img
                   src={bookmark.favicon}
                   alt=""
-                  className="size-7 object-contain mt-1 flex-shrink-0 border border-border p-0.5 bg-background"
+                  className="size-6 sm:size-7 object-contain mt-0.5 sm:mt-1 flex-shrink-0 border border-border p-0.5 bg-background"
                 />
               ) : (
-                <Globe className="size-7 text-muted-foreground mt-1 flex-shrink-0" />
+                <Globe className="size-6 sm:size-7 text-muted-foreground mt-0.5 sm:mt-1 flex-shrink-0" />
               )}
               <div className="space-y-1 min-w-0 flex-1">
-                <h1 className="text-xl md:text-2xl font-black text-foreground tracking-tight leading-snug">
+                <h1 className="text-base sm:text-xl md:text-2xl font-black text-foreground tracking-tight leading-snug">
                   {bookmark.title}
                 </h1>
-                <div className="flex items-center gap-2 flex-wrap text-xs font-mono text-muted-foreground">
+                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap text-xs font-mono text-muted-foreground">
                   <span className="font-bold text-primary">{domain}</span>
                   <span>•</span>
                   <span>Added {formatDate(bookmark.dateAdded)}</span>
@@ -110,7 +110,7 @@ export function BrowseModeModal({
             </div>
 
             {/* HTTP Diagnostics Badge */}
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-2 self-start sm:self-auto flex-shrink-0">
               <HttpStatusBadge
                 status={bookmark.httpStatus}
                 statusText={bookmark.httpStatusText}
@@ -121,13 +121,13 @@ export function BrowseModeModal({
 
           {/* Redirect Alert / Info Banner */}
           {isRedirected && bookmark.finalUrl && (
-            <div className="p-3 bg-amber-500/10 border border-amber-500/30 text-xs text-foreground space-y-2">
+            <div className="p-2.5 sm:p-3 bg-amber-500/10 border border-amber-500/30 text-xs text-foreground space-y-2">
               <div className="font-bold uppercase tracking-wider text-amber-500 flex items-center gap-1.5">
                 <ArrowRight className="w-4 h-4" /> Redirect Detected (3xx / Final URL)
               </div>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 font-mono text-[11px] bg-background/80 p-2 border border-border">
                 <div className="truncate flex items-center gap-2">
-                  <span className="text-muted-foreground line-through truncate max-w-[200px]" title={bookmark.url}>
+                  <span className="text-muted-foreground line-through truncate max-w-[150px] sm:max-w-[200px]" title={bookmark.url}>
                     {bookmark.url}
                   </span>
                   <ArrowRight className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
@@ -139,7 +139,7 @@ export function BrowseModeModal({
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <button
                     onClick={() => handleCopyUrl(bookmark.finalUrl!, true)}
-                    className="hover:text-primary text-muted-foreground flex items-center gap-1"
+                    className="hover:text-primary text-muted-foreground flex items-center gap-1 cursor-pointer text-xs"
                   >
                     {copiedRedirect ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
                     <span>{copiedRedirect ? "Copied" : "Copy Target"}</span>
@@ -159,7 +159,7 @@ export function BrowseModeModal({
 
           {/* Description */}
           {bookmark.description && (
-            <p className="text-sm text-muted-foreground leading-relaxed">
+            <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
               {bookmark.description}
             </p>
           )}
@@ -182,7 +182,7 @@ export function BrowseModeModal({
                 href={bookmark.url}
                 target="_blank"
                 rel="noreferrer"
-                className="pop-3d inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground font-bold text-xs border border-primary cursor-pointer"
+                className="pop-3d inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-primary text-primary-foreground font-bold text-xs border border-primary cursor-pointer"
               >
                 Open Page <ExternalLink className="w-3.5 h-3.5" />
               </a>
@@ -222,14 +222,14 @@ export function BrowseModeModal({
         </div>
 
         {/* Media & Visual Assets Section */}
-        <div className="border border-border bg-card p-5 space-y-4">
+        <div className="border border-border bg-card p-3.5 sm:p-5 space-y-4">
           <div className="flex items-center justify-between border-b border-border pb-2 flex-wrap gap-2">
-            <h3 className="text-sm font-extrabold uppercase tracking-wider text-foreground flex items-center gap-2">
+            <h3 className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-foreground flex items-center gap-2">
               <ImageIcon className="w-4 h-4 text-primary" /> Visual Assets & Fetched Media
             </h3>
 
-            {/* Media Filter Selector */}
-            <div className="flex items-center border border-border bg-muted/40 p-0.5 text-xs">
+            {/* Media Filter Selector (Horizontally scrollable) */}
+            <div className="flex items-center border border-border bg-muted/40 p-0.5 text-xs overflow-x-auto no-scrollbar max-w-full">
               <button
                 onClick={() => setActiveMediaTab("all")}
                 className={`px-2 py-0.5 font-bold uppercase transition-all ${

@@ -56,30 +56,30 @@ export function RefetchProgressModal({
         )}
 
         {/* Statistics Grid */}
-        <div className="grid grid-cols-3 gap-3 text-center">
-          <div className="p-3 bg-card border border-border">
-            <div className="flex items-center justify-center gap-1 text-xs font-bold text-green-500 uppercase">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Healthy
+        <div className="grid grid-cols-3 gap-1.5 sm:gap-3 text-center">
+          <div className="p-2 sm:p-3 bg-card border border-border">
+            <div className="flex items-center justify-center gap-1 text-[10px] sm:text-xs font-bold text-green-500 uppercase">
+              <CheckCircle2 className="w-3 sm:w-3.5 h-3 sm:h-3.5" /> Healthy
             </div>
-            <div className="text-xl font-black font-mono mt-1 text-foreground">
+            <div className="text-base sm:text-xl font-black font-mono mt-1 text-foreground">
               {progress.successCount}
             </div>
           </div>
 
-          <div className="p-3 bg-card border border-border">
-            <div className="flex items-center justify-center gap-1 text-xs font-bold text-destructive uppercase">
-              <AlertTriangle className="w-3.5 h-3.5" /> Errors
+          <div className="p-2 sm:p-3 bg-card border border-border">
+            <div className="flex items-center justify-center gap-1 text-[10px] sm:text-xs font-bold text-destructive uppercase">
+              <AlertTriangle className="w-3 sm:w-3.5 h-3 sm:h-3.5" /> Errors
             </div>
-            <div className="text-xl font-black font-mono mt-1 text-foreground">
+            <div className="text-base sm:text-xl font-black font-mono mt-1 text-foreground">
               {progress.errorCount}
             </div>
           </div>
 
-          <div className="p-3 bg-card border border-border">
-            <div className="flex items-center justify-center gap-1 text-xs font-bold text-muted-foreground uppercase">
-              <SkipForward className="w-3.5 h-3.5" /> Skipped (200)
+          <div className="p-2 sm:p-3 bg-card border border-border">
+            <div className="flex items-center justify-center gap-1 text-[10px] sm:text-xs font-bold text-muted-foreground uppercase">
+              <SkipForward className="w-3 sm:w-3.5 h-3 sm:h-3.5" /> Skipped
             </div>
-            <div className="text-xl font-black font-mono mt-1 text-foreground">
+            <div className="text-base sm:text-xl font-black font-mono mt-1 text-foreground">
               {progress.skippedCount}
             </div>
           </div>

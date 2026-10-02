@@ -85,13 +85,14 @@ export function Header({
 
         {/* Right Action Tools Strip */}
         <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-          {/* Sort By Dropdown (Compact, fits all screens) */}
+          {/* Sort By Dropdown (Compact & neatly styled) */}
           <div className="flex items-center border border-border bg-muted/40 px-1.5 sm:px-2 py-1 gap-1 text-xs flex-shrink-0">
             <ArrowUpDown className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-muted-foreground flex-shrink-0" />
             <select
               value={sortField}
               onChange={(e) => onSortFieldChange(e.target.value as SortField)}
-              className="bg-transparent text-[10px] sm:text-xs font-bold uppercase text-foreground outline-none cursor-pointer max-w-[100px] sm:max-w-none"
+              className="bg-transparent text-[10px] sm:text-xs font-bold uppercase text-foreground outline-none cursor-pointer max-w-[85px] xs:max-w-[100px] sm:max-w-none"
+              aria-label="Sort bookmarks"
             >
               <option value="date-desc">Newest</option>
               <option value="date-asc">Oldest</option>
@@ -202,7 +203,7 @@ export function Header({
             </Button>
 
             {dropdownOpen && (
-              <div className="absolute right-0 top-full mt-1.5 z-50 bg-card border-2 border-border shadow-2xl p-2 min-w-[220px] flex flex-col gap-1 animate-in zoom-in-95 duration-150">
+              <div className="absolute right-0 top-full mt-1.5 z-50 bg-card border-2 border-border shadow-2xl p-2 w-60 max-w-[calc(100vw-20px)] flex flex-col gap-1 animate-in zoom-in-95 duration-150">
                 <div className="text-[10px] font-black uppercase tracking-wider text-muted-foreground px-2 py-1 border-b border-border">
                   Display View
                 </div>
@@ -294,7 +295,7 @@ export function Header({
                   <span>New Folder</span>
                 </button>
 
-                {/* GitHub Sync */}
+                {/* GitHub Sync (in dropdown for mobile/tablet) */}
                 <div className="pt-1 mt-1 border-t border-border px-1">
                   <GitHubSyncStatus
                     config={gitHubConfig}
@@ -309,24 +310,26 @@ export function Header({
             )}
           </div>
 
-          {/* Add Bookmark Button */}
+          {/* Desktop Add Bookmark Button (Hidden on mobile < md since it has dedicated FAB in bottom nav) */}
           <Button
             variant="default"
             size="sm"
             onClick={onOpenAddBookmark}
-            className="gap-1 font-bold text-xs flex-shrink-0 px-2 sm:px-3"
+            className="hidden md:inline-flex gap-1 font-bold text-xs flex-shrink-0 px-3"
             title="Add New Bookmark (Ctrl+N)"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Add</span>
+            <span>Add Bookmark</span>
           </Button>
 
           {/* Settings & Theme Toggle Cluster */}
           <div className="flex items-center gap-1 pl-1 border-l border-border flex-shrink-0">
+            {/* Desktop Settings Button (Hidden on mobile < md since it lives in bottom nav) */}
             <Button
               variant="outline"
               size="icon-sm"
               onClick={onOpenSettings}
+              className="hidden md:inline-flex"
               title="Settings & Preferences"
               aria-label="Settings"
             >

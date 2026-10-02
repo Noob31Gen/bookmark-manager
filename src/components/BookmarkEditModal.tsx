@@ -273,11 +273,11 @@ export function BookmarkEditModal({
         </div>
 
         {/* Actions */}
-        <div className="flex items-center justify-end gap-2 pt-4 border-t border-border">
-          <Button type="button" variant="outline" onClick={onClose} disabled={isSaving}>
+        <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2 pt-4 border-t border-border">
+          <Button type="button" variant="outline" onClick={onClose} disabled={isSaving} className="justify-center">
             Cancel
           </Button>
-          <Button type="submit" variant="default" disabled={isSaving}>
+          <Button type="submit" variant="default" disabled={isSaving} className="font-bold justify-center">
             {isSaving ? "Saving..." : bookmark ? "Save Changes" : "Create Bookmark"}
           </Button>
         </div>

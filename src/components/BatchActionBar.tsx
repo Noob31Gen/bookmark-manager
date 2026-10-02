@@ -62,39 +62,51 @@ export function BatchActionBar({
 
   return (
     <>
-      <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-40 bg-card border-2 border-primary text-foreground shadow-2xl px-3 sm:px-4 py-2.5 sm:py-3 flex flex-wrap items-center gap-2 sm:gap-4 max-w-4xl w-[95%] sm:w-auto animate-in fade-in slide-in-from-bottom-4 duration-200">
-        {/* Selection Status */}
+      <div className="fixed bottom-[60px] md:bottom-6 left-1/2 -translate-x-1/2 z-40 bg-card border-2 border-primary text-foreground shadow-2xl p-2 sm:px-4 sm:py-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4 max-w-4xl w-[96%] sm:w-auto animate-in fade-in slide-in-from-bottom-4 duration-200">
+        {/* Selection Status Row */}
+        <div className="flex items-center justify-between sm:justify-start gap-2 sm:pr-2 sm:border-r border-border">
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={onToggleSelectAll}
+              className="p-1 hover:text-primary text-muted-foreground flex items-center gap-1.5 text-xs font-bold uppercase cursor-pointer"
+              title={allSelected ? "Deselect All" : "Select All Visible"}
+            >
+              {allSelected ? (
+                <CheckSquare className="w-4 h-4 text-primary" />
+              ) : (
+                <Square className="w-4 h-4" />
+              )}
+              <span className="font-mono text-xs">
+                {allSelected ? "All" : "Select All"}
+              </span>
+            </button>
 
-        <div className="flex items-center gap-2 pr-2 border-r border-border">
-          <button
-            onClick={onToggleSelectAll}
-            className="p-1 hover:text-primary text-muted-foreground flex items-center gap-1.5 text-xs font-bold uppercase"
-            title={allSelected ? "Deselect All" : "Select All Visible"}
-          >
-            {allSelected ? (
-              <CheckSquare className="w-4 h-4 text-primary" />
-            ) : (
-              <Square className="w-4 h-4" />
-            )}
-            <span className="hidden sm:inline font-mono">
-              {allSelected ? "All" : "Select All"}
+            <span className="text-[11px] font-mono font-bold bg-primary text-primary-foreground px-2 py-0.5 border border-primary whitespace-nowrap">
+              {selectedBookmarkCount > 0 && `${selectedBookmarkCount} Items`}
+              {selectedBookmarkCount > 0 && selectedFolderCount > 0 && ", "}
+              {selectedFolderCount > 0 && `${selectedFolderCount} Folders`}
             </span>
-          </button>
+          </div>
 
-          <span className="text-xs font-mono font-bold bg-primary text-primary-foreground px-2 py-0.5 border border-primary">
-            {selectedBookmarkCount > 0 && `${selectedBookmarkCount} Bookmarks`}
-            {selectedBookmarkCount > 0 && selectedFolderCount > 0 && ", "}
-            {selectedFolderCount > 0 && `${selectedFolderCount} Folders`}
-          </span>
+          {/* Mobile Clear Selection button */}
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={onClearSelection}
+            className="sm:hidden"
+            title="Clear Selection (Esc)"
+          >
+            <X className="w-4 h-4" />
+          </Button>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex items-center gap-2 flex-wrap">
+        {/* Action Buttons (Horizontally scrollable on mobile) */}
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar pb-0.5 sm:pb-0">
           <Button
             variant="outline"
             size="sm"
             onClick={() => setMoveModalOpen(true)}
-            className="gap-1.5 text-xs font-bold uppercase"
+            className="gap-1.5 text-xs font-bold uppercase flex-shrink-0"
             title="Move selected to another folder"
           >
             <FolderInput className="w-3.5 h-3.5 text-primary" />
@@ -106,7 +118,7 @@ export function BatchActionBar({
               variant="outline"
               size="sm"
               onClick={() => setCopyModalOpen(true)}
-              className="gap-1.5 text-xs font-bold uppercase"
+              className="gap-1.5 text-xs font-bold uppercase flex-shrink-0"
               title="Duplicate bookmarks to another folder"
             >
               <Copy className="w-3.5 h-3.5" />
@@ -119,7 +131,7 @@ export function BatchActionBar({
               variant="outline"
               size="sm"
               onClick={onRefetchSelected}
-              className="gap-1.5 text-xs font-bold uppercase"
+              className="gap-1.5 text-xs font-bold uppercase flex-shrink-0"
               title="Refetch metadata and HTTP status for selected"
             >
               <RefreshCw className="w-3.5 h-3.5 text-primary" />
@@ -132,7 +144,7 @@ export function BatchActionBar({
               variant="outline"
               size="sm"
               onClick={onCaptureSelectedScreenshots}
-              className="gap-1.5 text-xs font-bold uppercase"
+              className="gap-1.5 text-xs font-bold uppercase flex-shrink-0"
               title="Open temporary tabs and capture snapshots for selected bookmarks"
             >
               <Camera className="w-3.5 h-3.5 text-primary" />
@@ -144,17 +156,19 @@ export function BatchActionBar({
             variant="destructive"
             size="sm"
             onClick={onDeleteSelected}
-            className="gap-1.5 text-xs font-bold uppercase"
+            className="gap-1.5 text-xs font-bold uppercase flex-shrink-0"
             title="Delete selected bookmarks and folders"
           >
             <Trash2 className="w-3.5 h-3.5" />
             <span>Delete</span>
           </Button>
 
+          {/* Desktop Clear Selection button */}
           <Button
             variant="ghost"
             size="icon-sm"
             onClick={onClearSelection}
+            className="hidden sm:inline-flex flex-shrink-0"
             title="Clear Selection (Esc)"
           >
             <X className="w-4 h-4" />

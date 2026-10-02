@@ -1,5 +1,5 @@
-@import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
 
 @theme {
   --color-border: var(--border);
@@ -215,7 +215,15 @@ html, body {
 .animate-in.duration-500 { animation-duration: 500ms; }
 .animate-in.duration-700 { animation-duration: 700ms; }
 
-/* Mobile safe area utility */
+/* Mobile touch and safe area utilities */
 .safe-area-bottom {
-  padding-bottom: calc(0.375rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+}
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.touch-target {
+  min-height: 38px;
+  min-width: 38px;
+  touch-action: manipulation;
 }

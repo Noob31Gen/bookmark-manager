@@ -650,18 +650,18 @@ export function SettingsModal({
             )}
 
             {/* Manual Sync Actions */}
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-              <div className="flex flex-wrap gap-2">
+            <div className="pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   onClick={handleTestConnection}
                   disabled={testing || isSyncing || isPulling}
-                  className="gap-1.5 font-bold"
+                  className="gap-1.5 font-bold justify-center"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${testing ? "animate-spin text-primary" : ""}`} />
-                  {testing ? "Testing..." : "Test Connection"}
+                  <span>{testing ? "Testing..." : "Test Connection"}</span>
                 </Button>
 
                 <Button
@@ -670,11 +670,11 @@ export function SettingsModal({
                   size="sm"
                   onClick={handleManualPush}
                   disabled={isSyncing || testing || isPulling}
-                  className="gap-1.5 font-bold"
+                  className="gap-1.5 font-bold justify-center"
                   title="Upload all local bookmarks and screenshots to GitHub"
                 >
                   <Upload className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin text-primary" : ""}`} />
-                  <span>{isSyncing ? "Pushing..." : "Manual Push to GitHub"}</span>
+                  <span>{isSyncing ? "Pushing..." : "Push to GitHub"}</span>
                 </Button>
 
                 <Button
@@ -683,11 +683,11 @@ export function SettingsModal({
                   size="sm"
                   onClick={handleManualPull}
                   disabled={isPulling || isSyncing || testing}
-                  className="gap-1.5 font-bold"
+                  className="gap-1.5 font-bold justify-center"
                   title="Download and restore bookmarks from GitHub"
                 >
                   <Download className={`w-3.5 h-3.5 ${isPulling ? "animate-spin text-primary" : ""}`} />
-                  <span>{isPulling ? "Pulling..." : "Manual Pull from GitHub"}</span>
+                  <span>{isPulling ? "Pulling..." : "Pull from GitHub"}</span>
                 </Button>
               </div>
             </div>
@@ -702,7 +702,7 @@ export function SettingsModal({
             </h3>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
             <Button
               type="button"
               variant="outline"

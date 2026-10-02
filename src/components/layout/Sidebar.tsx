@@ -336,7 +336,7 @@ export function Sidebar({
       </div>
 
       {/* Chrome Bookmarks Folders */}
-      <div className="flex flex-col border border-border bg-card p-3 max-h-[300px] overflow-y-auto">
+      <div className="flex flex-col border border-border bg-card p-3">
         <h4 className="text-[11px] font-extrabold uppercase tracking-widest text-muted-foreground mb-2 px-2 flex items-center justify-between">
           <span className="flex items-center gap-1.5">
             <Folder className="w-3.5 h-3.5" /> Chrome Folders
@@ -344,14 +344,14 @@ export function Sidebar({
           {selectedFolderId && (
             <button
               onClick={() => onSelectFolder(null)}
-              className="text-[10px] text-primary hover:underline font-bold lowercase"
+              className="text-[10px] text-primary hover:underline font-bold lowercase cursor-pointer"
             >
               clear
             </button>
           )}
         </h4>
 
-        <div className="space-y-0.5">
+        <div className="space-y-0.5 max-h-56 md:max-h-[300px] overflow-y-auto">
           {folders.length === 0 ? (
             <p className="text-xs text-muted-foreground px-2 py-1">No folders found</p>
           ) : (
@@ -369,7 +369,7 @@ export function Sidebar({
           {selectedDomain && (
             <button
               onClick={() => onSelectDomain(null)}
-              className="text-[10px] text-primary hover:underline font-bold lowercase"
+              className="text-[10px] text-primary hover:underline font-bold lowercase cursor-pointer"
             >
               clear
             </button>
@@ -386,14 +386,14 @@ export function Sidebar({
           />
         )}
 
-        <div className="space-y-0.5 max-h-36 overflow-y-auto">
+        <div className="space-y-0.5 max-h-40 md:max-h-36 overflow-y-auto">
           {filteredDomains.map(({ domain, count }) => {
             const isSelected = selectedDomain === domain;
             return (
               <button
                 key={domain}
                 onClick={() => onSelectDomain(isSelected ? null : domain)}
-                className={`w-full flex items-center justify-between px-2 py-1 text-xs font-mono transition-all text-left cursor-pointer ${
+                className={`w-full flex items-center justify-between px-2 py-1.5 text-xs font-mono transition-all text-left cursor-pointer ${
                   isSelected
                     ? "bg-primary text-primary-foreground font-bold"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -416,7 +416,7 @@ export function Sidebar({
           {selectedTag && (
             <button
               onClick={() => onSelectTag(null)}
-              className="text-[10px] text-primary hover:underline font-bold lowercase"
+              className="text-[10px] text-primary hover:underline font-bold lowercase cursor-pointer"
             >
               clear
             </button>
@@ -426,7 +426,7 @@ export function Sidebar({
         {allTags.length === 0 ? (
           <p className="text-xs text-muted-foreground px-2">No tags created yet.</p>
         ) : (
-          <div className="flex flex-wrap gap-1.5 px-1 max-h-40 overflow-y-auto">
+          <div className="flex flex-wrap gap-1.5 px-1 max-h-48 md:max-h-40 overflow-y-auto">
             {allTags.map(({ tag, count }) => {
               const isSelected = selectedTag === tag;
               return (
@@ -436,7 +436,7 @@ export function Sidebar({
                     onSelectTag(isSelected ? null : tag);
                     onSelectFilter("all");
                   }}
-                  className={`pop-3d inline-flex items-center gap-1 px-2 py-0.5 text-xs font-mono font-bold uppercase transition-all border cursor-pointer ${
+                  className={`pop-3d inline-flex items-center gap-1 px-2 py-1 text-xs font-mono font-bold uppercase transition-all border cursor-pointer ${
                     isSelected
                       ? "bg-primary text-primary-foreground border-primary"
                       : "bg-muted/40 text-muted-foreground border-border/70 hover:text-foreground hover:bg-accent"

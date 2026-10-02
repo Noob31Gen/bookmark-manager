@@ -224,19 +224,19 @@ export function BookmarkCard({
       </div>
 
       {/* Footer Details & Action Strip */}
-      <div className="border-t border-border bg-muted/30 p-2.5 flex items-center justify-between gap-2 mt-auto">
+      <div className="border-t border-border bg-muted/30 p-2 sm:p-2.5 flex items-center justify-between gap-2 mt-auto">
         <a
           href={bookmark.url}
           target="_blank"
           rel="noreferrer"
-          className="text-[11px] font-mono text-muted-foreground hover:text-primary font-bold truncate flex items-center gap-1 max-w-[130px]"
+          className="text-[11px] font-mono text-muted-foreground hover:text-primary font-bold truncate flex items-center gap-1 min-w-0 flex-1"
           title={bookmark.url}
         >
-          <span>{domain}</span>
+          <span className="truncate">{domain}</span>
           <ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />
         </a>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
           {/* Browse Mode Button */}
           <button
             onClick={() => onOpenBrowse(bookmark)}

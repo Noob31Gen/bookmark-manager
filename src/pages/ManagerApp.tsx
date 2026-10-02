@@ -659,14 +659,14 @@ export function ManagerApp() {
       />
 
       {/* Hero Banner */}
-      <div className="border-b border-border bg-card/60 py-3 sm:py-5 px-3 sm:px-6 w-full">
-        <div className="max-w-[1600px] w-full mx-auto flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
+      <div className="border-b border-border bg-card/60 py-2.5 sm:py-4 px-3 sm:px-6 w-full">
+        <div className="max-w-[1600px] w-full mx-auto flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 sm:gap-4">
           <div className="min-w-0">
-            <h1 className="text-lg sm:text-2xl md:text-3xl font-black uppercase tracking-tight">
+            <h1 className="text-base sm:text-xl md:text-2xl font-black uppercase tracking-tight">
               Personal <span className="marker-slanted">Bookmarks</span> Vault
             </h1>
-            <p className="text-[11px] sm:text-xs md:text-sm text-muted-foreground mt-0.5">
-              Synchronized with native Chrome bookmarks & backed up to GitHub.
+            <p className="text-[10px] sm:text-xs text-muted-foreground mt-0.5">
+              Synchronized with Chrome bookmarks & backed up to GitHub.
             </p>
           </div>
 
@@ -676,7 +676,7 @@ export function ManagerApp() {
               id="global-search-input"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search title, domain, http code (404/200), tags (/)..."
+              placeholder="Search title, domain, http code, tags (/)..."
               icon={<Search className="w-4 h-4 text-muted-foreground" />}
               className="py-1.5 sm:py-2 bg-background shadow-xs text-xs md:text-sm w-full"
             />
@@ -684,6 +684,7 @@ export function ManagerApp() {
               <button
                 onClick={() => setSearchQuery("")}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+                title="Clear search"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -693,7 +694,7 @@ export function ManagerApp() {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 max-w-[1600px] w-full mx-auto p-3 sm:p-4 md:p-6 pb-24 md:pb-6 flex flex-col md:flex-row gap-4 sm:gap-6 min-w-0">
+      <div className="flex-1 max-w-[1600px] w-full mx-auto p-3 sm:p-4 md:p-6 pb-28 md:pb-6 flex flex-col md:flex-row gap-4 sm:gap-6 min-w-0">
         {/* Desktop Left Sidebar (Hidden on mobile < md) */}
         <div className="hidden md:block">
           <Sidebar
@@ -721,32 +722,34 @@ export function ManagerApp() {
 
         {/* Bookmarks Display Area */}
         <main className="flex-1 min-w-0">
-          {/* Active Filter Pill Strip */}
+          {/* Active Filter Pill Strip (Scrollable on mobile) */}
           {(selectedFolderId || selectedTag || selectedDomain || httpCodeFilter || searchQuery || activeFilter !== "all") && (
-            <div className="mb-6 flex flex-wrap items-center gap-2 p-3 bg-muted/30 border border-border">
-              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                Active Filters:
+            <div className="mb-4 sm:mb-6 flex items-center gap-1.5 sm:gap-2 p-2 sm:p-3 bg-muted/30 border border-border overflow-x-auto no-scrollbar">
+              <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-muted-foreground flex-shrink-0">
+                Filters:
               </span>
 
               {selectedFolderId && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold bg-primary text-primary-foreground">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] sm:text-xs font-bold bg-primary text-primary-foreground flex-shrink-0">
                   <Folder className="w-3 h-3" />
-                  {folders.find((f) => f.id === selectedFolderId)?.title || "Folder"}
-                  <button onClick={() => setSelectedFolderId(null)} className="cursor-pointer">×</button>
+                  <span className="max-w-[120px] truncate">
+                    {folders.find((f) => f.id === selectedFolderId)?.title || "Folder"}
+                  </span>
+                  <button onClick={() => setSelectedFolderId(null)} className="cursor-pointer font-black ml-0.5">×</button>
                 </span>
               )}
 
               {selectedDomain && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-mono font-bold bg-primary text-primary-foreground">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] sm:text-xs font-mono font-bold bg-primary text-primary-foreground flex-shrink-0">
                   <Globe className="w-3 h-3" />
-                  {selectedDomain}
-                  <button onClick={() => setSelectedDomain(null)} className="cursor-pointer">×</button>
+                  <span className="max-w-[120px] truncate">{selectedDomain}</span>
+                  <button onClick={() => setSelectedDomain(null)} className="cursor-pointer font-black ml-0.5">×</button>
                 </span>
               )}
 
               {httpCodeFilter && (
                 <span
-                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-bold uppercase ${
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 text-[11px] sm:text-xs font-bold uppercase flex-shrink-0 ${
                     httpCodeFilter === "healthy"
                       ? "bg-green-500 text-black"
                       : httpCodeFilter === "redirects"
@@ -760,29 +763,29 @@ export function ManagerApp() {
                   {httpCodeFilter === "redirects" && <ArrowUpRight className="w-3.5 h-3.5" />}
                   {httpCodeFilter === "errors" && <ShieldAlert className="w-3.5 h-3.5" />}
                   {httpCodeFilter === "unfetched" && <HelpCircle className="w-3.5 h-3.5" />}
-                  Status: {httpCodeFilter}
-                  <button onClick={() => setHttpCodeFilter(null)} className="cursor-pointer">×</button>
+                  <span>{httpCodeFilter}</span>
+                  <button onClick={() => setHttpCodeFilter(null)} className="cursor-pointer font-black ml-0.5">×</button>
                 </span>
               )}
 
               {selectedTag && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-mono font-bold bg-primary text-primary-foreground">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] sm:text-xs font-mono font-bold bg-primary text-primary-foreground flex-shrink-0">
                   #{selectedTag}
-                  <button onClick={() => setSelectedTag(null)} className="cursor-pointer">×</button>
+                  <button onClick={() => setSelectedTag(null)} className="cursor-pointer font-black ml-0.5">×</button>
                 </span>
               )}
 
               {activeFilter !== "all" && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold bg-secondary text-secondary-foreground">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] sm:text-xs font-bold bg-secondary text-secondary-foreground flex-shrink-0">
                   View: {activeFilter}
-                  <button onClick={() => setActiveFilter("all")} className="cursor-pointer">×</button>
+                  <button onClick={() => setActiveFilter("all")} className="cursor-pointer font-black ml-0.5">×</button>
                 </span>
               )}
 
               {searchQuery && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold bg-muted text-foreground border border-border">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] sm:text-xs font-bold bg-muted text-foreground border border-border flex-shrink-0">
                   Query: "{searchQuery}"
-                  <button onClick={() => setSearchQuery("")} className="cursor-pointer">×</button>
+                  <button onClick={() => setSearchQuery("")} className="cursor-pointer font-black ml-0.5">×</button>
                 </span>
               )}
 
@@ -795,9 +798,9 @@ export function ManagerApp() {
                   setActiveFilter("all");
                   setSearchQuery("");
                 }}
-                className="text-xs text-primary hover:underline font-bold ml-auto cursor-pointer"
+                className="text-[11px] sm:text-xs text-primary hover:underline font-bold ml-auto pl-2 flex-shrink-0 cursor-pointer"
               >
-                Reset all
+                Clear all
               </button>
             </div>
           )}
@@ -1031,10 +1034,25 @@ export function ManagerApp() {
             snapshotCount={snapshotCount}
             statusCounts={statusCounts}
           />
-          <div className="sticky bottom-0 bg-card pt-3 border-t border-border flex gap-2">
+          <div className="sticky bottom-0 bg-card pt-3 border-t border-border flex items-center gap-2">
+            {(selectedFolderId || selectedTag || selectedDomain || httpCodeFilter) && (
+              <Button
+                variant="outline"
+                className="font-bold uppercase tracking-wider text-xs"
+                onClick={() => {
+                  setSelectedFolderId(null);
+                  setSelectedTag(null);
+                  setSelectedDomain(null);
+                  setHttpCodeFilter(null);
+                  setActiveFilter("all");
+                }}
+              >
+                Reset
+              </Button>
+            )}
             <Button
               variant="default"
-              className="w-full font-bold uppercase tracking-wider text-xs"
+              className="flex-1 font-bold uppercase tracking-wider text-xs"
               onClick={() => setMobileDrawerOpen(false)}
             >
               Show ({filteredBookmarks.length}) Bookmarks
@@ -1044,7 +1062,7 @@ export function ManagerApp() {
       </Modal>
 
       {/* Mobile Bottom Navigation Bar (Hidden on desktop md+) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-card/95 backdrop-blur-md border-t-2 border-border px-2 py-1.5 flex items-center justify-around shadow-2xl safe-area-bottom select-none">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-card/95 backdrop-blur-md border-t-2 border-border px-1 py-1 flex items-center justify-around shadow-2xl safe-area-bottom select-none">
         {/* Vault / All */}
         <button
           onClick={() => {
@@ -1055,13 +1073,13 @@ export function ManagerApp() {
             setActiveFilter("all");
             setSearchQuery("");
           }}
-          className={`flex flex-col items-center justify-center py-1 px-2 text-[10px] font-bold uppercase transition-colors cursor-pointer ${
+          className={`flex-1 flex flex-col items-center justify-center py-1.5 px-1 text-[10px] font-bold uppercase transition-colors cursor-pointer min-h-[44px] ${
             activeFilter === "all" && !selectedFolderId && !selectedTag && !selectedDomain && !httpCodeFilter && !searchQuery
               ? "text-primary"
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          <Sparkles className="w-5 h-5 mb-0.5" />
+          <Sparkles className="w-4 h-4 mb-0.5" />
           <span>Vault</span>
         </button>
 
@@ -1072,51 +1090,53 @@ export function ManagerApp() {
             setSelectedFolderId(null);
             setSelectedTag(null);
           }}
-          className={`flex flex-col items-center justify-center py-1 px-2 text-[10px] font-bold uppercase transition-colors cursor-pointer ${
+          className={`flex-1 flex flex-col items-center justify-center py-1.5 px-1 text-[10px] font-bold uppercase transition-colors cursor-pointer min-h-[44px] ${
             activeFilter === "starred"
               ? "text-primary"
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          <Star className={`w-5 h-5 mb-0.5 ${activeFilter === "starred" ? "text-amber-400 fill-amber-400" : ""}`} />
+          <Star className={`w-4 h-4 mb-0.5 ${activeFilter === "starred" ? "text-amber-400 fill-amber-400" : ""}`} />
           <span>Starred</span>
         </button>
 
         {/* Center Quick Add Button */}
-        <button
-          onClick={() => {
-            setEditingBookmark(null);
-            setEditModalOpen(true);
-          }}
-          className="flex flex-col items-center justify-center px-3.5 py-1.5 -mt-3.5 bg-primary text-primary-foreground border-2 border-border shadow-md active:translate-y-0.5 cursor-pointer"
-          title="Add New Bookmark"
-        >
-          <Plus className="w-5 h-5" />
-          <span className="text-[9px] font-black uppercase tracking-wider">Add</span>
-        </button>
+        <div className="flex-1 flex justify-center">
+          <button
+            onClick={() => {
+              setEditingBookmark(null);
+              setEditModalOpen(true);
+            }}
+            className="flex flex-col items-center justify-center px-4 py-2 -mt-4 bg-primary text-primary-foreground border-2 border-border shadow-lg active:translate-y-0.5 cursor-pointer font-black"
+            title="Add New Bookmark"
+          >
+            <Plus className="w-5 h-5" />
+            <span className="text-[9px] uppercase tracking-wider">Add</span>
+          </button>
+        </div>
 
         {/* Filters & Folders Drawer Button */}
         <button
           onClick={() => setMobileDrawerOpen(true)}
-          className={`relative flex flex-col items-center justify-center py-1 px-2 text-[10px] font-bold uppercase transition-colors cursor-pointer ${
+          className={`flex-1 relative flex flex-col items-center justify-center py-1.5 px-1 text-[10px] font-bold uppercase transition-colors cursor-pointer min-h-[44px] ${
             selectedFolderId || selectedTag || selectedDomain || httpCodeFilter
               ? "text-primary"
               : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          <Folder className="w-5 h-5 mb-0.5" />
+          <Folder className="w-4 h-4 mb-0.5" />
           <span>Filters</span>
           {(selectedFolderId || selectedTag || selectedDomain || httpCodeFilter) && (
-            <span className="absolute top-1 right-2 w-2 h-2 bg-primary ring-2 ring-card" />
+            <span className="absolute top-1 right-1/4 w-2 h-2 bg-primary ring-2 ring-card" />
           )}
         </button>
 
         {/* Settings Button */}
         <button
           onClick={() => setSettingsModalOpen(true)}
-          className="flex flex-col items-center justify-center py-1 px-2 text-[10px] font-bold uppercase text-muted-foreground hover:text-foreground cursor-pointer"
+          className="flex-1 flex flex-col items-center justify-center py-1.5 px-1 text-[10px] font-bold uppercase text-muted-foreground hover:text-foreground cursor-pointer min-h-[44px]"
         >
-          <Settings className="w-5 h-5 mb-0.5" />
+          <Settings className="w-4 h-4 mb-0.5" />
           <span>Settings</span>
         </button>
       </nav>
