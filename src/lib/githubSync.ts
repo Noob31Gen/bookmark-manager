@@ -59,13 +59,12 @@ export function sanitizeGitHubConfig(config: GitHubConfig): GitHubConfig {
   };
 }
 
-// Standardized GitHub API Headers
+// Standardized GitHub API Headers (CORS-friendly for Chrome extensions and browser pages)
 export function getGitHubHeaders(token: string): Record<string, string> {
   const cleanToken = (token || "").replace(/^(Bearer|token)\s+/i, "").trim();
   return {
     Authorization: `Bearer ${cleanToken}`,
     Accept: "application/vnd.github.v3+json",
-    "X-GitHub-Api-Version": "2022-11-28",
   };
 }
 
@@ -321,7 +320,18 @@ async function createGitBlob(
   content: string,
   encoding: "utf-8" | "base64" = "utf-8"
 ): Promise<string | null> {
+  if (!content) return null;
   const headers = getGitHubHeaders(config.token);
+
+  let cleanContent = content;
+  if (encoding === "base64") {
+    if (cleanContent.includes(",")) {
+      cleanContent = cleanContent.split(",")[1];
+    }
+    cleanContent = cleanContent.replace(/[\r\n\s]/g, "");
+    if (!cleanContent) return null;
+  }
+
   try {
     const res = await fetch(
       `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/blobs`,
@@ -331,15 +341,17 @@ async function createGitBlob(
           ...headers,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ content, encoding }),
+        body: JSON.stringify({ content: cleanContent, encoding }),
       }
     );
     if (res.ok) {
       const data = await res.json();
       return data.sha;
     }
-  } catch (err) {
-    console.error("Failed to create git blob", err);
+    const errData = await res.json().catch(() => ({}));
+    console.warn(`Git blob creation rejected (HTTP ${res.status}):`, errData.message || res.statusText);
+  } catch (err: any) {
+    console.warn("Failed to create git blob:", err.message || err);
   }
   return null;
 }
