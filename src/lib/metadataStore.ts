@@ -149,6 +149,19 @@ export async function saveGitHubConfig(config: Partial<GitHubConfig>): Promise<G
   const current = await getGitHubConfig();
   const updated = { ...current, ...config };
   await setStorageItem(GITHUB_CONFIG_KEY, updated);
+
+  if (typeof chrome !== "undefined" && chrome.alarms) {
+    try {
+      if (updated.enabled && updated.autoSync && updated.token && updated.owner && updated.repo) {
+        chrome.alarms.create("github-vault-sync", {
+          periodInMinutes: Math.max(5, updated.syncIntervalMinutes || 30),
+        });
+      } else {
+        chrome.alarms.clear("github-vault-sync");
+      }
+    } catch {}
+  }
+
   return updated;
 }
 

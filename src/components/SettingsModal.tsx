@@ -20,7 +20,7 @@ import {
   Camera,
 } from "lucide-react";
 import { GitHubConfig, UserPreferences, FetchScope, ClickAction, MainViewThumbnail } from "../lib/types";
-import { testGitHubConnection, syncVaultToGitHub, pullVaultFromGitHub } from "../lib/githubSync";
+import { testGitHubConnection, syncVaultToGitHub, pullVaultFromGitHub, sanitizeGitHubConfig } from "../lib/githubSync";
 import { saveGitHubConfig, getUserPreferences, saveUserPreferences } from "../lib/metadataStore";
 import {
   getEnhancedBookmarkTree,
@@ -86,7 +86,10 @@ export function SettingsModal({
   }, [config, isOpen]);
 
   const handleTestConnection = async () => {
-    if (!formData.token?.trim() || !formData.owner?.trim() || !formData.repo?.trim()) {
+    const cleanConfig = sanitizeGitHubConfig(formData);
+    setFormData(cleanConfig);
+
+    if (!cleanConfig.token || !cleanConfig.owner || !cleanConfig.repo) {
       setTestResult({
         ok: false,
         message: "Personal Access Token, GitHub Owner, and Repository Name are all required.",
@@ -96,16 +99,16 @@ export function SettingsModal({
     setTesting(true);
     setTestResult(null);
     try {
-      const result = await testGitHubConnection(formData);
+      const result = await testGitHubConnection(cleanConfig);
       setTestResult(result);
       if (result.ok) {
-        if (result.defaultBranch && !formData.branch?.trim()) {
-          setFormData((prev) => ({ ...prev, branch: result.defaultBranch || "main" }));
-        }
-        await saveGitHubConfig({
-          ...formData,
+        const updatedConfig = {
+          ...cleanConfig,
+          branch: cleanConfig.branch || result.defaultBranch || "main",
           enabled: true,
-        });
+        };
+        setFormData(updatedConfig);
+        await saveGitHubConfig(updatedConfig);
         onConfigUpdated();
       }
     } catch (err: any) {
@@ -117,10 +120,9 @@ export function SettingsModal({
 
   const handleSaveAll = async (e: React.FormEvent) => {
     e.preventDefault();
-    await saveGitHubConfig({
-      ...formData,
-      enabled: !!(formData.token?.trim() && formData.owner?.trim() && formData.repo?.trim()),
-    });
+    const cleanConfig = sanitizeGitHubConfig(formData);
+    setFormData(cleanConfig);
+    await saveGitHubConfig(cleanConfig);
     await saveUserPreferences(preferences);
     onConfigUpdated();
     setSyncFeedback("Settings successfully saved!");
@@ -128,7 +130,10 @@ export function SettingsModal({
   };
 
   const handleManualPush = async () => {
-    if (!formData.token?.trim() || !formData.owner?.trim() || !formData.repo?.trim()) {
+    const cleanConfig = sanitizeGitHubConfig(formData);
+    setFormData(cleanConfig);
+
+    if (!cleanConfig.token || !cleanConfig.owner || !cleanConfig.repo) {
       setTestResult({
         ok: false,
         message: "Please enter your GitHub Personal Access Token, Owner, and Repository Name first.",
@@ -136,11 +141,11 @@ export function SettingsModal({
       return;
     }
     setIsSyncing(true);
-    setSyncFeedback("Uploading bookmarks vault & metadata to GitHub...");
+    setSyncFeedback("Uploading bookmarks vault, folders & assets to GitHub...");
     setTestResult(null);
     try {
-      await saveGitHubConfig({ ...formData, enabled: true });
-      const res = await syncVaultToGitHub(formData);
+      await saveGitHubConfig(cleanConfig);
+      const res = await syncVaultToGitHub(cleanConfig);
       setSyncFeedback(res.message);
       setTestResult({
         ok: res.success,
@@ -157,22 +162,25 @@ export function SettingsModal({
   };
 
   const handleManualPull = async () => {
-    if (!formData.token?.trim() || !formData.owner?.trim() || !formData.repo?.trim()) {
+    const cleanConfig = sanitizeGitHubConfig(formData);
+    setFormData(cleanConfig);
+
+    if (!cleanConfig.token || !cleanConfig.owner || !cleanConfig.repo) {
       setTestResult({
         ok: false,
         message: "Please enter your GitHub Personal Access Token, Owner, and Repository Name first.",
       });
       return;
     }
-    if (!window.confirm("This will merge metadata & tags from your GitHub repository. Proceed?")) {
+    if (!window.confirm("This will synchronize your vault with GitHub, restoring any missing bookmarks and updating metadata (tags, notes, descriptions, stars). Proceed?")) {
       return;
     }
     setIsPulling(true);
-    setSyncFeedback("Downloading & restoring bookmarks vault from GitHub...");
+    setSyncFeedback("Downloading and restoring bookmarks vault from GitHub...");
     setTestResult(null);
     try {
-      await saveGitHubConfig({ ...formData, enabled: true });
-      const res = await pullVaultFromGitHub(formData);
+      await saveGitHubConfig(cleanConfig);
+      const res = await pullVaultFromGitHub(cleanConfig, { restoreBookmarks: true });
       setSyncFeedback(res.message);
       setTestResult({
         ok: res.success,
@@ -561,7 +569,7 @@ export function SettingsModal({
                   type={showToken ? "text" : "password"}
                   value={formData.token}
                   onChange={(e) => setFormData({ ...formData, token: e.target.value })}
-                  placeholder="github_pat_..."
+                  placeholder="github_pat_... or ghp_..."
                   icon={<Key className="w-4 h-4" />}
                 />
                 <Button
@@ -574,6 +582,9 @@ export function SettingsModal({
                   {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </Button>
               </div>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Required permissions: <strong className="text-foreground">Contents: Read and write</strong> (Fine-grained) or <strong className="text-foreground">repo</strong> scope (Classic).
+              </p>
             </div>
 
             {/* Owner & Repo */}
@@ -585,7 +596,7 @@ export function SettingsModal({
                 <Input
                   value={formData.owner}
                   onChange={(e) => setFormData({ ...formData, owner: e.target.value })}
-                  placeholder="e.g. Noob31Gen"
+                  placeholder="e.g. Noob31Gen or paste full URL"
                 />
               </div>
 
@@ -604,7 +615,7 @@ export function SettingsModal({
             {/* Branch */}
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1">
-                Branch
+                Branch (Auto-defaults to main / master)
               </label>
               <Input
                 value={formData.branch}

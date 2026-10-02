@@ -59,6 +59,7 @@ export interface EnhancedBookmark {
   isFavorite?: boolean;
   readerContent?: string;
   lastCaptured?: number;
+  githubSha?: string;
   httpStatus?: number;
   httpStatusText?: string;
   lastChecked?: number;

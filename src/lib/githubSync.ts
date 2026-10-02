@@ -1,43 +1,53 @@
 import { GitHubConfig, EnhancedBookmark, BookmarkMetadata, FolderNode } from "./types";
-import { saveGitHubConfig, getAllMetadata, bulkUpdateMetadata } from "./metadataStore";
-import { getEnhancedBookmarkTree, extractAllBookmarks, extractFolderTree } from "./chromeBookmarks";
+import { saveGitHubConfig, getAllMetadata, bulkUpdateMetadata, saveBookmarkMetadata } from "./metadataStore";
+import { getEnhancedBookmarkTree, extractAllBookmarks, extractFolderTree, createBookmark } from "./chromeBookmarks";
 import { getDomain } from "./utils";
 
 // Robust sanitization helper for GitHub configurations
 export function sanitizeGitHubConfig(config: GitHubConfig): GitHubConfig {
   let owner = (config.owner || "").trim();
   let repo = (config.repo || "").trim();
-  const token = (config.token || "").trim();
-  const branch = (config.branch || "").trim() || "main";
+  let token = (config.token || "").trim();
+  let branch = (config.branch || "").trim() || "main";
 
-  // Handle URL pasted into owner or repo (e.g. https://github.com/Noob31Gen/bookmark-vault)
-  if (owner.includes("github.com/")) {
-    const parts = owner.split("github.com/")[1].split("/").filter(Boolean);
+  // Clean quotes and token prefixes (e.g. Bearer or token)
+  token = token.replace(/^["']|["']$/g, "").replace(/^(Bearer|token)\s+/i, "").trim();
+  owner = owner.replace(/^["']|["']$/g, "").trim();
+  repo = repo.replace(/^["']|["']$/g, "").trim();
+
+  // Extract from full GitHub URLs (e.g. https://github.com/Noob31Gen/bookmark-vault or git@github.com:owner/repo.git)
+  if (owner.includes("github.com")) {
+    const cleanUrl = owner.replace(/^(https?:\/\/)?(www\.)?github\.com[\/:]/, "").replace(/\.git$/, "");
+    const parts = cleanUrl.split("/").filter(Boolean);
     if (parts.length >= 1) owner = parts[0];
-    if (parts.length >= 2 && !repo) repo = parts[1].replace(/\.git$/, "");
+    if (parts.length >= 2 && !repo) repo = parts[1];
   } else if (owner.includes("/")) {
     const parts = owner.split("/").filter(Boolean);
     if (parts.length >= 1) owner = parts[0];
-    if (parts.length >= 2 && !repo) repo = parts[1].replace(/\.git$/, "");
+    if (parts.length >= 2 && !repo) repo = parts[1];
   }
 
-  if (repo.includes("github.com/")) {
-    const parts = repo.split("github.com/")[1].split("/").filter(Boolean);
+  if (repo.includes("github.com")) {
+    const cleanUrl = repo.replace(/^(https?:\/\/)?(www\.)?github\.com[\/:]/, "").replace(/\.git$/, "");
+    const parts = cleanUrl.split("/").filter(Boolean);
     if (parts.length >= 2) {
       owner = parts[0];
-      repo = parts[1].replace(/\.git$/, "");
+      repo = parts[1];
     } else if (parts.length === 1) {
-      repo = parts[0].replace(/\.git$/, "");
+      repo = parts[0];
     }
   } else if (repo.includes("/")) {
     const parts = repo.split("/").filter(Boolean);
     if (parts.length >= 2) {
       owner = parts[0];
-      repo = parts[1].replace(/\.git$/, "");
+      repo = parts[1];
     }
   }
 
-  repo = repo.replace(/\.git$/, "");
+  // Clean trailing .git or slashes
+  owner = owner.replace(/^\/+|\/+$/g, "").replace(/\.git$/, "");
+  repo = repo.replace(/^\/+|\/+$/g, "").replace(/\.git$/, "");
+  branch = branch.replace(/^refs\/heads\//, "").replace(/^\/+|\/+$/g, "") || "main";
 
   return {
     ...config,
@@ -49,21 +59,34 @@ export function sanitizeGitHubConfig(config: GitHubConfig): GitHubConfig {
   };
 }
 
-// Robust UTF-8 Base64 Encoding and Decoding (chunked to prevent call stack limits)
-function utf8ToBase64(str: string): string {
+// Standardized GitHub API Headers
+export function getGitHubHeaders(token: string): Record<string, string> {
+  const cleanToken = (token || "").replace(/^(Bearer|token)\s+/i, "").trim();
+  return {
+    Authorization: `Bearer ${cleanToken}`,
+    Accept: "application/vnd.github.v3+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+}
+
+// Robust UTF-8 Base64 Encoding & Decoding (safe for all unicode and large strings)
+export function utf8ToBase64(str: string): string {
   const bytes = new TextEncoder().encode(str);
   let binary = "";
   const len = bytes.byteLength;
-  const chunkSize = 0x8000;
+  const chunkSize = 8192;
   for (let i = 0; i < len; i += chunkSize) {
     const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
-    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+    for (let j = 0; j < chunk.length; j++) {
+      binary += String.fromCharCode(chunk[j]);
+    }
   }
   return btoa(binary);
 }
 
-function base64ToUtf8(str: string): string {
-  const binary = atob(str.replace(/\s/g, ""));
+export function base64ToUtf8(str: string): string {
+  const clean = (str || "").replace(/[\r\n\s]/g, "");
+  const binary = atob(clean);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
@@ -71,25 +94,50 @@ function base64ToUtf8(str: string): string {
   return new TextDecoder().decode(bytes);
 }
 
-function sanitizePathSegment(name: string): string {
+export function sanitizePathSegment(name: string): string {
   return (name || "untitled")
     .replace(/[/\\?%*:|"<>]/g, "-")
     .replace(/\s+/g, " ")
+    .replace(/^\.+|\.+$/g, "")
     .trim() || "item";
 }
 
-// Generate beautiful markdown catalog
-function generateMarkdownReadme(bookmarks: EnhancedBookmark[], folderMap: Record<string, string>): string {
+// Helper for concurrency controlled promises
+async function runWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let index = 0;
+  async function worker() {
+    while (index < items.length) {
+      const i = index++;
+      results[i] = await fn(items[i]);
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+// Generate rich, beautiful markdown catalog for GitHub repository browse mode
+export function generateMarkdownReadme(
+  bookmarks: EnhancedBookmark[],
+  folderMap: Record<string, string>
+): string {
   const dateStr = new Date().toLocaleString();
+  const starred = bookmarks.filter((b) => b.isFavorite).length;
+
   let md = `# 📑 Personal Bookmarks Vault\n\n`;
   md += `> Automatically organized, backed up, and version-controlled with [Noob31 Bookmark Vault](https://noob31.com)\n\n`;
-  md += `### 📊 Vault Overview\n`;
-  md += `- **Total Bookmarks:** ${bookmarks.length}\n`;
-  md += `- **Starred Bookmarks:** ${bookmarks.filter((b) => b.isFavorite).length}\n`;
-  md += `- **Last Synchronized:** ${dateStr}\n\n`;
+  md += `### 📊 Vault Overview\n\n`;
+  md += `| Total Bookmarks | ⭐ Starred | Last Synchronized |\n`;
+  md += `| :---: | :---: | :---: |\n`;
+  md += `| **${bookmarks.length}** | **${starred}** | \`${dateStr}\` |\n\n`;
   md += `---\n\n`;
 
-  // Group by folder
+  // Group bookmarks by folder
   const grouped: Record<string, EnhancedBookmark[]> = {};
   for (const b of bookmarks) {
     const folder = folderMap[b.parentId || ""] || "Bookmarks Bar";
@@ -104,9 +152,13 @@ function generateMarkdownReadme(bookmarks: EnhancedBookmark[], folderMap: Record
       const domain = getDomain(b.url);
       const tags = b.tags && b.tags.length > 0 ? ` • ${b.tags.map((t) => `\`#${t}\``).join(" ")}` : "";
       const statusBadge = b.httpStatus ? ` \`[${b.httpStatus}]\`` : "";
-      md += `- ${star}[${b.title || "Untitled"}](${b.url || "#"}) — *${domain}*${statusBadge}${tags}\n`;
+      const safeTitle = (b.title || "Untitled").replace(/[\[\]]/g, "\\$&");
+      const safeUrl = b.url || "#";
+
+      md += `- ${star}[${safeTitle}](${safeUrl}) — *${domain}*${statusBadge}${tags}\n`;
       if (b.description || b.notes) {
-        md += `  > ${b.description || b.notes}\n`;
+        const note = (b.description || b.notes || "").replace(/\n+/g, " ");
+        md += `  > ${note}\n`;
       }
     }
     md += `\n`;
@@ -115,75 +167,114 @@ function generateMarkdownReadme(bookmarks: EnhancedBookmark[], folderMap: Record
   return md;
 }
 
-// Check GitHub repo accessibility and token validity
+// Check GitHub repo accessibility, token validity, and branch detection
 export async function testGitHubConnection(
   rawConfig: GitHubConfig
 ): Promise<{ ok: boolean; message: string; user?: string; defaultBranch?: string }> {
   const config = sanitizeGitHubConfig(rawConfig);
   if (!config.token || !config.owner || !config.repo) {
-    return { ok: false, message: "Personal Access Token, Owner, and Repository name are required." };
+    return { ok: false, message: "Personal Access Token, Owner, and Repository name are all required." };
   }
 
   try {
-    const res = await fetch(`https://api.github.com/repos/${config.owner}/${config.repo}`, {
-      headers: {
-        Authorization: `Bearer ${config.token}`,
-        Accept: "application/vnd.github.v3+json",
-      },
-    });
+    const headers = getGitHubHeaders(config.token);
+    const res = await fetch(
+      `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`,
+      { headers }
+    );
 
     if (res.status === 200) {
       const data = await res.json();
+      const defaultBranch = data.default_branch || "main";
       return {
         ok: true,
-        message: `Connected to ${data.full_name} (${data.private ? "Private" : "Public"}) • Default branch: ${data.default_branch}`,
+        message: `Successfully connected to ${data.full_name} (${data.private ? "Private" : "Public"}) • Default branch: "${defaultBranch}"`,
         user: data.owner?.login,
-        defaultBranch: data.default_branch,
+        defaultBranch,
       };
     }
 
     if (res.status === 401) {
-      return { ok: false, message: "Invalid GitHub Personal Access Token (401 Unauthorized)." };
+      return {
+        ok: false,
+        message: "Invalid GitHub Personal Access Token (401 Unauthorized). Please check that your token is valid and not expired.",
+      };
     }
 
     if (res.status === 403) {
-      return { ok: false, message: "Token lacks permissions or GitHub API rate limit exceeded (403 Forbidden)." };
+      const rateLimitRemaining = res.headers.get("x-ratelimit-remaining");
+      if (rateLimitRemaining === "0") {
+        return {
+          ok: false,
+          message: "GitHub API rate limit exceeded (403). Please wait a few moments or use an authenticated token.",
+        };
+      }
+      return {
+        ok: false,
+        message: "Access Forbidden (403): Ensure your token has 'Contents: Read and write' repository permissions (for Fine-Grained tokens) or 'repo' scope (for Classic tokens).",
+      };
     }
 
     if (res.status === 404) {
       return {
         ok: false,
-        message: `Repository "${config.owner}/${config.repo}" not found or token has insufficient permissions.`,
+        message: `Repository "${config.owner}/${config.repo}" was not found (404). Check that the owner and repository names are spelled correctly, and your token has permission to access it.`,
       };
     }
 
     const err = await res.json().catch(() => ({}));
-    return { ok: false, message: err.message || `GitHub error: HTTP ${res.status}` };
+    return { ok: false, message: err.message || `GitHub error: HTTP ${res.status} ${res.statusText}` };
   } catch (err: any) {
-    return { ok: false, message: `Network error: ${err.message || err}` };
+    return { ok: false, message: `Network connection error: ${err.message || err}` };
   }
 }
 
-// Fetch branch ref or detect if repository is empty
+// Fetch branch ref or detect if repository is empty / new
 async function getBranchRef(
   config: GitHubConfig
-): Promise<{ sha: string | null; isEmpty: boolean }> {
+): Promise<{ sha: string | null; isEmpty: boolean; defaultBranch?: string }> {
+  const headers = getGitHubHeaders(config.token);
   try {
     const res = await fetch(
-      `https://api.github.com/repos/${config.owner}/${config.repo}/git/ref/heads/${encodeURIComponent(config.branch)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${config.token}`,
-          Accept: "application/vnd.github.v3+json",
-        },
-      }
+      `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/ref/heads/${encodeURIComponent(config.branch)}`,
+      { headers }
     );
+
     if (res.status === 409) {
       return { sha: null, isEmpty: true };
     }
+
     if (res.status === 404) {
+      // Check if repo has another default branch (e.g. master vs main) or is brand new
+      try {
+        const repoRes = await fetch(
+          `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`,
+          { headers }
+        );
+        if (repoRes.ok) {
+          const repoData = await repoRes.json();
+          if (repoData.size === 0) {
+            return { sha: null, isEmpty: true, defaultBranch: repoData.default_branch };
+          }
+          if (repoData.default_branch && repoData.default_branch !== config.branch) {
+            const defaultRefRes = await fetch(
+              `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/ref/heads/${encodeURIComponent(repoData.default_branch)}`,
+              { headers }
+            );
+            if (defaultRefRes.ok) {
+              const defaultRefData = await defaultRefRes.json();
+              return {
+                sha: defaultRefData.object?.sha || null,
+                isEmpty: false,
+                defaultBranch: repoData.default_branch,
+              };
+            }
+          }
+        }
+      } catch {}
       return { sha: null, isEmpty: false };
     }
+
     if (res.ok) {
       const data = await res.json();
       return { sha: data.object?.sha || null, isEmpty: false };
@@ -196,6 +287,7 @@ async function getBranchRef(
 
 // Initialize an empty repository with an initial commit using contents API
 async function initializeEmptyRepo(config: GitHubConfig): Promise<string | null> {
+  const headers = getGitHubHeaders(config.token);
   try {
     const initBody = {
       message: "[Initial Commit] Initialize Bookmarks Vault Repository",
@@ -203,12 +295,11 @@ async function initializeEmptyRepo(config: GitHubConfig): Promise<string | null>
       branch: config.branch,
     };
     const res = await fetch(
-      `https://api.github.com/repos/${config.owner}/${config.repo}/contents/README.md`,
+      `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/contents/README.md`,
       {
         method: "PUT",
         headers: {
-          Authorization: `Bearer ${config.token}`,
-          Accept: "application/vnd.github.v3+json",
+          ...headers,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(initBody),
@@ -224,22 +315,25 @@ async function initializeEmptyRepo(config: GitHubConfig): Promise<string | null>
   return null;
 }
 
-// Create a Git Blob (for binary/screenshots or text)
+// Create a Git Blob (for binary screenshots or large text)
 async function createGitBlob(
   config: GitHubConfig,
   content: string,
   encoding: "utf-8" | "base64" = "utf-8"
 ): Promise<string | null> {
+  const headers = getGitHubHeaders(config.token);
   try {
-    const res = await fetch(`https://api.github.com/repos/${config.owner}/${config.repo}/git/blobs`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.token}`,
-        Accept: "application/vnd.github.v3+json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ content, encoding }),
-    });
+    const res = await fetch(
+      `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/blobs`,
+      {
+        method: "POST",
+        headers: {
+          ...headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ content, encoding }),
+      }
+    );
     if (res.ok) {
       const data = await res.json();
       return data.sha;
@@ -250,7 +344,7 @@ async function createGitBlob(
   return null;
 }
 
-// Push all bookmarks & metadata to GitHub with automatic conflict resolution & force push
+// Push all bookmarks & metadata to GitHub with automatic conflict resolution & clean state
 export async function syncVaultToGitHub(
   rawConfig: GitHubConfig
 ): Promise<{ success: boolean; message: string; timestamp: number }> {
@@ -271,69 +365,125 @@ export async function syncVaultToGitHub(
     const folderTree = extractFolderTree(tree);
     const metadata = await getAllMetadata();
 
-    // 1. Check if repo is empty or ref exists
-    let { sha: parentCommitSha, isEmpty } = await getBranchRef(config);
+    // 1. Check if repo is empty or if target branch ref exists
+    let { sha: parentCommitSha, isEmpty, defaultBranch } = await getBranchRef(config);
     if (isEmpty || !parentCommitSha) {
-      // Auto-initialize empty repository so Git Data API endpoints work
       const initSha = await initializeEmptyRepo(config);
       if (initSha) {
         parentCommitSha = initSha;
       } else {
-        // Re-check branch ref
         const recheck = await getBranchRef(config);
         parentCommitSha = recheck.sha;
       }
     }
 
-    // 2. Map folder IDs to folder titles
+    // 2. Map folder IDs to clean folder paths
     const folderMap: Record<string, string> = {};
     function buildFolderMap(nodes: FolderNode[], prefix = "") {
       for (const n of nodes) {
-        const fullPath = prefix ? `${prefix}/${sanitizePathSegment(n.title)}` : sanitizePathSegment(n.title);
+        const segment = sanitizePathSegment(n.title);
+        const fullPath = prefix ? `${prefix}/${segment}` : segment;
         folderMap[n.id] = fullPath;
         if (n.children) buildFolderMap(n.children, fullPath);
       }
     }
     buildFolderMap(folderTree);
 
-    // 3. Build the Git Tree items
-    const treeItems: Array<{
+    // 3. Collect existing non-vault files to preserve (e.g. .github/ workflows, LICENSE, .gitignore)
+    const preservedNonVaultItems: Array<{
       path: string;
-      mode: "100644";
-      type: "blob";
-      content?: string;
-      sha?: string;
+      mode: "100644" | "100755" | "040000" | "160000" | "120000";
+      type: "blob" | "tree" | "commit";
+      sha: string;
     }> = [];
 
-    // .noob31/vault-index.json (Complete index for rapid pull/restore)
+    if (parentCommitSha) {
+      try {
+        const headers = getGitHubHeaders(config.token);
+        const commitRes = await fetch(
+          `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/commits/${parentCommitSha}`,
+          { headers }
+        );
+        if (commitRes.ok) {
+          const commitData = await commitRes.json();
+          const baseTreeSha = commitData.tree?.sha;
+          if (baseTreeSha) {
+            const treeRes = await fetch(
+              `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/trees/${baseTreeSha}?recursive=1`,
+              { headers }
+            );
+            if (treeRes.ok) {
+              const baseTreeData = await treeRes.json();
+              for (const item of baseTreeData.tree || []) {
+                if (
+                  item.type === "blob" &&
+                  !item.path.startsWith("bookmarks/") &&
+                  !item.path.startsWith("assets/") &&
+                  !item.path.startsWith(".noob31/") &&
+                  item.path !== "README.md" &&
+                  item.path !== "bookmarks-vault.json"
+                ) {
+                  preservedNonVaultItems.push({
+                    path: item.path,
+                    mode: item.mode || "100644",
+                    type: "blob",
+                    sha: item.sha,
+                  });
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Could not inspect parent tree for non-vault items", err);
+      }
+    }
+
+    // 4. Build Tree Items with Map for deduplication
+    const treeMap = new Map<
+      string,
+      {
+        path: string;
+        mode: "100644";
+        type: "blob";
+        content?: string;
+        sha?: string;
+      }
+    >();
+
+    // .noob31/vault-index.json (Complete structured vault snapshot)
     const vaultIndex = {
-      version: "2.0.0",
+      version: "2.1.0",
       syncedAt: new Date().toISOString(),
       bookmarkCount: flatList.length,
       tree,
+      bookmarks: flatList,
       metadata,
     };
-    treeItems.push({
+
+    treeMap.set(".noob31/vault-index.json", {
       path: ".noob31/vault-index.json",
       mode: "100644",
       type: "blob",
       content: JSON.stringify(vaultIndex, null, 2),
     });
 
-    // README.md (Browseable directory on GitHub)
+    // README.md (Browsing catalog)
     const readmeContent = generateMarkdownReadme(flatList, folderMap);
-    treeItems.push({
+    treeMap.set("README.md", {
       path: "README.md",
       mode: "100644",
       type: "blob",
       content: readmeContent,
     });
 
-    // Individual bookmark files: bookmarks/[folder]/[clean_title]_[id].json
+    // Process bookmark JSON files and upload binary screenshots concurrently
+    const screenshotUploadTasks: Array<{ id: string; base64: string; existingSha?: string }> = [];
+
     for (const b of flatList) {
       const folderPath = folderMap[b.parentId || ""] || "Bookmarks Bar";
       const fileSlug = sanitizePathSegment(b.title || b.id).slice(0, 50);
-      const filePath = `bookmarks/${folderPath}/${fileSlug}_${b.id}.json`;
+      const filePath = `bookmarks/${folderPath}/${fileSlug}_${b.id}.json`.replace(/\/+/g, "/");
 
       const cleanBookmark = {
         id: b.id,
@@ -354,68 +504,67 @@ export async function syncVaultToGitHub(
         lastChecked: b.lastChecked,
       };
 
-      treeItems.push({
+      treeMap.set(filePath, {
         path: filePath,
         mode: "100644",
         type: "blob",
         content: JSON.stringify(cleanBookmark, null, 2),
       });
 
-      // If bookmark has a screenshot, upload as real image in assets/screenshots/
       if (b.screenshot && b.screenshot.startsWith("data:image/")) {
         const base64Data = b.screenshot.split(",")[1];
         if (base64Data) {
-          const blobSha = await createGitBlob(config, base64Data, "base64");
+          screenshotUploadTasks.push({
+            id: b.id,
+            base64: base64Data,
+            existingSha: b.githubSha,
+          });
+        }
+      }
+    }
+
+    // Upload screenshots concurrently (5 at a time)
+    if (screenshotUploadTasks.length > 0) {
+      await runWithConcurrency(screenshotUploadTasks, 5, async (task) => {
+        try {
+          const blobSha = task.existingSha || (await createGitBlob(config, task.base64, "base64"));
           if (blobSha) {
-            treeItems.push({
-              path: `assets/screenshots/${b.id}.webp`,
+            treeMap.set(`assets/screenshots/${task.id}.webp`, {
+              path: `assets/screenshots/${task.id}.webp`,
               mode: "100644",
               type: "blob",
               sha: blobSha,
             });
+            if (!task.existingSha) {
+              await saveBookmarkMetadata(task.id, { githubSha: blobSha });
+            }
           }
+        } catch (blobErr) {
+          console.warn(`Failed to upload screenshot blob for bookmark ${task.id}`, blobErr);
         }
+      });
+    }
+
+    // Add preserved non-vault items
+    for (const item of preservedNonVaultItems) {
+      if (!treeMap.has(item.path)) {
+        treeMap.set(item.path, item as any);
       }
     }
 
-    // 4. Retrieve base tree SHA from parent commit if available
-    let baseTreeSha: string | null = null;
-    if (parentCommitSha) {
-      try {
-        const commitRes = await fetch(
-          `https://api.github.com/repos/${config.owner}/${config.repo}/git/commits/${parentCommitSha}`,
-          {
-            headers: {
-              Authorization: `Bearer ${config.token}`,
-              Accept: "application/vnd.github.v3+json",
-            },
-          }
-        );
-        if (commitRes.ok) {
-          const commitData = await commitRes.json();
-          baseTreeSha = commitData.tree?.sha || null;
-        }
-      } catch (err) {
-        console.warn("Could not fetch parent commit tree", err);
-      }
-    }
+    const treeItems = Array.from(treeMap.values());
 
-    // 5. Create Git Tree
-    const treePayload: any = { tree: treeItems };
-    if (baseTreeSha) {
-      treePayload.base_tree = baseTreeSha;
-    }
-
+    // 5. Create Git Tree (clean state without ghost files)
+    const headers = getGitHubHeaders(config.token);
     const createTreeRes = await fetch(
-      `https://api.github.com/repos/${config.owner}/${config.repo}/git/trees`,
+      `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/trees`,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${config.token}`,
-          Accept: "application/vnd.github.v3+json",
+          ...headers,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(treePayload),
+        body: JSON.stringify({ tree: treeItems }),
       }
     );
 
@@ -428,18 +577,17 @@ export async function syncVaultToGitHub(
 
     // 6. Create Git Commit
     const commitPayload: any = {
-      message: `[Vault Sync] Synchronized ${flatList.length} bookmarks across ${Object.keys(folderMap).length} folders`,
+      message: `[Vault Sync] Synchronized ${flatList.length} bookmarks across ${Object.keys(folderMap).length} folders (${new Date().toLocaleDateString()})`,
       tree: newTreeSha,
       parents: parentCommitSha ? [parentCommitSha] : [],
     };
 
     const createCommitRes = await fetch(
-      `https://api.github.com/repos/${config.owner}/${config.repo}/git/commits`,
+      `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/commits`,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${config.token}`,
-          Accept: "application/vnd.github.v3+json",
+          ...headers,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(commitPayload),
@@ -453,43 +601,39 @@ export async function syncVaultToGitHub(
     const commitData = await createCommitRes.json();
     const newCommitSha = commitData.sha;
 
-    // 7. Force update branch reference to resolve all conflicts
+    // 7. Update branch reference (or create it if it doesn't exist)
     let updateRefRes = await fetch(
-      `https://api.github.com/repos/${config.owner}/${config.repo}/git/refs/heads/${encodeURIComponent(config.branch)}`,
+      `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/refs/heads/${encodeURIComponent(config.branch)}`,
       {
         method: "PATCH",
         headers: {
-          Authorization: `Bearer ${config.token}`,
-          Accept: "application/vnd.github.v3+json",
+          ...headers,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ sha: newCommitSha, force: true }),
       }
     );
 
-    // If branch ref doesn't exist yet, create it
     if (!updateRefRes.ok && updateRefRes.status === 404) {
       const createRefRes = await fetch(
-        `https://api.github.com/repos/${config.owner}/${config.repo}/git/refs`,
+        `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/refs`,
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${config.token}`,
-            Accept: "application/vnd.github.v3+json",
+            ...headers,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ ref: `refs/heads/${config.branch}`, sha: newCommitSha }),
         }
       );
+
       if (!createRefRes.ok) {
-        // If 422, ref might have been created concurrently, retry PATCH with force: true
         updateRefRes = await fetch(
-          `https://api.github.com/repos/${config.owner}/${config.repo}/git/refs/heads/${encodeURIComponent(config.branch)}`,
+          `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/refs/heads/${encodeURIComponent(config.branch)}`,
           {
             method: "PATCH",
             headers: {
-              Authorization: `Bearer ${config.token}`,
-              Accept: "application/vnd.github.v3+json",
+              ...headers,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({ sha: newCommitSha, force: true }),
@@ -526,65 +670,253 @@ export async function syncVaultToGitHub(
   }
 }
 
-// Pull & restore bookmarks & metadata from GitHub
+// Fetch raw vault index from GitHub (handling > 1MB files and Git tree fallback)
+async function fetchRawVaultIndex(config: GitHubConfig): Promise<any | null> {
+  const headers = getGitHubHeaders(config.token);
+  const targetPaths = [`.noob31/vault-index.json`, `bookmarks-vault.json`];
+
+  for (const filePath of targetPaths) {
+    try {
+      const res = await fetch(
+        `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/contents/${filePath}?ref=${encodeURIComponent(config.branch)}`,
+        { headers }
+      );
+
+      if (res.ok) {
+        const data = await res.json();
+        // 1. Direct Base64 content (files <= 1MB)
+        if (data.content) {
+          const jsonStr = base64ToUtf8(data.content);
+          return JSON.parse(jsonStr);
+        }
+
+        // 2. Git Blob API for larger files (> 1MB)
+        if (data.sha) {
+          const blobRes = await fetch(
+            `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/blobs/${data.sha}`,
+            {
+              headers: {
+                ...headers,
+                Accept: "application/vnd.github.raw+json",
+              },
+            }
+          );
+          if (blobRes.ok) {
+            const rawText = await blobRes.text();
+            return JSON.parse(rawText);
+          }
+        }
+
+        // 3. Download URL
+        if (data.download_url) {
+          const downloadRes = await fetch(data.download_url, { headers });
+          if (downloadRes.ok) {
+            return await downloadRes.json();
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`Could not read ${filePath}`, err);
+    }
+  }
+
+  // 4. Fallback: Reconstruct vault from individual bookmarks JSON files in the Git Tree
+  try {
+    const { sha: branchSha } = await getBranchRef(config);
+    if (branchSha) {
+      const commitRes = await fetch(
+        `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/commits/${branchSha}`,
+        { headers }
+      );
+      if (commitRes.ok) {
+        const commitData = await commitRes.json();
+        const treeSha = commitData.tree?.sha;
+        if (treeSha) {
+          const treeRes = await fetch(
+            `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/trees/${treeSha}?recursive=1`,
+            { headers }
+          );
+          if (treeRes.ok) {
+            const treeData = await treeRes.json();
+            const bookmarkNodes = (treeData.tree || []).filter(
+              (item: any) =>
+                item.path?.startsWith("bookmarks/") && item.path?.endsWith(".json") && item.type === "blob"
+            );
+
+            if (bookmarkNodes.length > 0) {
+              const restoredBookmarks: EnhancedBookmark[] = [];
+              const restoredMetadata: Record<string, BookmarkMetadata> = {};
+
+              await runWithConcurrency(bookmarkNodes, 6, async (node: any) => {
+                try {
+                  const bRes = await fetch(
+                    `https://api.github.com/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/blobs/${node.sha}`,
+                    { headers: { ...headers, Accept: "application/vnd.github.raw+json" } }
+                  );
+                  if (bRes.ok) {
+                    const text = await bRes.text();
+                    const bm = JSON.parse(text);
+                    restoredBookmarks.push(bm);
+                    if (bm.id) {
+                      restoredMetadata[bm.id] = {
+                        tags: bm.tags,
+                        description: bm.description,
+                        notes: bm.notes,
+                        isFavorite: bm.isFavorite,
+                        httpStatus: bm.httpStatus,
+                        httpStatusText: bm.httpStatusText,
+                        finalUrl: bm.finalUrl,
+                      };
+                    }
+                  }
+                } catch {}
+              });
+
+              if (restoredBookmarks.length > 0) {
+                return {
+                  version: "2.1.0",
+                  syncedAt: new Date().toISOString(),
+                  bookmarkCount: restoredBookmarks.length,
+                  bookmarks: restoredBookmarks,
+                  metadata: restoredMetadata,
+                };
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Fallback tree reconstruction failed", err);
+  }
+
+  return null;
+}
+
+// Pull & restore bookmarks & metadata from GitHub (with URL-based matching & Chrome bookmark restoration)
 export async function pullVaultFromGitHub(
-  rawConfig: GitHubConfig
+  rawConfig: GitHubConfig,
+  options: { restoreBookmarks?: boolean } = { restoreBookmarks: true }
 ): Promise<{ success: boolean; message: string; count: number }> {
   const config = sanitizeGitHubConfig(rawConfig);
   if (!config.token || !config.owner || !config.repo) {
-    return { success: false, message: "Personal Access Token, Owner, and Repository are required.", count: 0 };
+    return {
+      success: false,
+      message: "Personal Access Token, Owner, and Repository are required.",
+      count: 0,
+    };
   }
 
   try {
-    // Try fetching .noob31/vault-index.json first, fallback to legacy bookmarks-vault.json
-    let res = await fetch(
-      `https://api.github.com/repos/${config.owner}/${config.repo}/contents/.noob31/vault-index.json?ref=${encodeURIComponent(config.branch)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${config.token}`,
-          Accept: "application/vnd.github.v3+json",
-        },
-      }
-    );
-
-    if (!res.ok) {
-      res = await fetch(
-        `https://api.github.com/repos/${config.owner}/${config.repo}/contents/bookmarks-vault.json?ref=${encodeURIComponent(config.branch)}`,
-        {
-          headers: {
-            Authorization: `Bearer ${config.token}`,
-            Accept: "application/vnd.github.v3+json",
-          },
-        }
-      );
-    }
-
-    if (!res.ok) {
+    const vault = await fetchRawVaultIndex(config);
+    if (!vault) {
       return {
         success: false,
-        message: `No vault index found in ${config.owner}/${config.repo} on branch ${config.branch}.`,
+        message: `No vault index or bookmark records found in repository "${config.owner}/${config.repo}" on branch "${config.branch}".`,
         count: 0,
       };
     }
 
-    const data = await res.json();
-    if (!data.content) {
-      return { success: false, message: "Empty vault index file in repository.", count: 0 };
+    const localTree = await getEnhancedBookmarkTree();
+    const localBookmarks = extractAllBookmarks(localTree);
+
+    // Map existing Chrome bookmarks by normalized URL
+    const urlToLocalBookmark = new Map<string, EnhancedBookmark>();
+    for (const b of localBookmarks) {
+      if (b.url) {
+        urlToLocalBookmark.set(b.url.trim().toLowerCase(), b);
+      }
     }
 
-    const jsonStr = base64ToUtf8(data.content);
-    const vault = JSON.parse(jsonStr);
+    const remoteBookmarks: EnhancedBookmark[] =
+      vault.bookmarks || (vault.tree ? extractAllBookmarks(vault.tree) : []);
+    const remoteMetadata: Record<string, BookmarkMetadata> = vault.metadata || {};
 
-    if (vault.metadata) {
-      await bulkUpdateMetadata(vault.metadata);
+    let createdCount = 0;
+    let updatedCount = 0;
+    const metadataUpdates: Record<string, Partial<BookmarkMetadata>> = {};
+
+    // 1. Process all remote bookmarks
+    for (const rb of remoteBookmarks) {
+      if (!rb.url) continue;
+      const normalizedUrl = rb.url.trim().toLowerCase();
+      let targetLocal = urlToLocalBookmark.get(normalizedUrl);
+
+      // Recreate bookmark in Chrome if missing
+      if (!targetLocal && options.restoreBookmarks) {
+        try {
+          const created = await createBookmark({
+            parentId: "1", // Default Bookmarks Bar
+            title: rb.title || rb.url,
+            url: rb.url,
+            tags: rb.tags || [],
+            description: rb.description || "",
+            notes: rb.notes || "",
+            isFavorite: rb.isFavorite || false,
+            favicon: rb.favicon,
+            screenshot: rb.screenshot,
+            ogImage: rb.ogImage,
+          });
+          targetLocal = created;
+          urlToLocalBookmark.set(normalizedUrl, created);
+          createdCount++;
+        } catch (createErr) {
+          console.warn(`Could not restore bookmark ${rb.url}`, createErr);
+        }
+      }
+
+      if (targetLocal) {
+        const existingMeta = remoteMetadata[rb.id] || {};
+        metadataUpdates[targetLocal.id] = {
+          tags: Array.from(
+            new Set([...(targetLocal.tags || []), ...(rb.tags || []), ...(existingMeta.tags || [])])
+          ),
+          description: rb.description || existingMeta.description || targetLocal.description,
+          notes: rb.notes || existingMeta.notes || targetLocal.notes,
+          isFavorite: rb.isFavorite ?? existingMeta.isFavorite ?? targetLocal.isFavorite,
+          screenshot: rb.screenshot || existingMeta.screenshot || targetLocal.screenshot,
+          ogImage: rb.ogImage || existingMeta.ogImage || targetLocal.ogImage,
+          favicon: rb.favicon || existingMeta.favicon || targetLocal.favicon,
+          httpStatus: rb.httpStatus || existingMeta.httpStatus || targetLocal.httpStatus,
+          httpStatusText: rb.httpStatusText || existingMeta.httpStatusText || targetLocal.httpStatusText,
+          finalUrl: rb.finalUrl || existingMeta.finalUrl || targetLocal.finalUrl,
+          lastChecked: rb.lastChecked || existingMeta.lastChecked || targetLocal.lastChecked,
+        };
+        updatedCount++;
+      }
+    }
+
+    // 2. Also map any raw metadata from remoteMetadata
+    for (const [metaId, meta] of Object.entries(remoteMetadata)) {
+      if (!metadataUpdates[metaId]) {
+        metadataUpdates[metaId] = meta;
+      }
+    }
+
+    if (Object.keys(metadataUpdates).length > 0) {
+      await bulkUpdateMetadata(metadataUpdates);
+    }
+
+    const totalProcessed = createdCount + updatedCount;
+    let summaryMsg = `Successfully synced vault from GitHub!`;
+    if (createdCount > 0 && updatedCount > 0) {
+      summaryMsg = `Restored ${createdCount} missing bookmarks and updated metadata for ${updatedCount} existing bookmarks!`;
+    } else if (createdCount > 0) {
+      summaryMsg = `Restored ${createdCount} bookmarks from GitHub!`;
+    } else if (updatedCount > 0) {
+      summaryMsg = `Synchronized metadata for ${updatedCount} bookmarks from GitHub!`;
     }
 
     return {
       success: true,
-      message: `Successfully restored metadata for ${vault.bookmarkCount || Object.keys(vault.metadata || {}).length} bookmarks from GitHub!`,
-      count: vault.bookmarkCount || Object.keys(vault.metadata || {}).length,
+      message: summaryMsg,
+      count: totalProcessed,
     };
   } catch (err: any) {
-    return { success: false, message: `Restore failed: ${err.message}`, count: 0 };
+    return {
+      success: false,
+      message: `Failed to restore from GitHub: ${err.message || err}`,
+      count: 0,
+    };
   }
 }

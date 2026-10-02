@@ -102,6 +102,7 @@ function transformNode(
     isFavorite: meta.isFavorite || false,
     readerContent: meta.readerContent,
     lastCaptured: meta.lastCaptured,
+    githubSha: meta.githubSha,
     fetchedTitle: meta.fetchedTitle,
     httpStatus: meta.httpStatus,
     httpStatusText: meta.httpStatusText,

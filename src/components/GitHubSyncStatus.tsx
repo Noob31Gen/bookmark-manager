@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Cloud, CloudOff, RefreshCw } from "lucide-react";
+import { Cloud, CloudOff, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
 import { Button } from "./ui/Button";
 import { GitHubConfig } from "../lib/types";
 import { syncVaultToGitHub } from "../lib/githubSync";
@@ -19,8 +19,10 @@ export function GitHubSyncStatus({
   const [isSyncing, setIsSyncing] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
+  const isConfigured = !!(config.token?.trim() && config.owner?.trim() && config.repo?.trim());
+
   const handleSyncNow = async () => {
-    if (!config.token?.trim() || !config.owner?.trim() || !config.repo?.trim()) {
+    if (!isConfigured) {
       onOpenSettings();
       return;
     }
@@ -39,11 +41,11 @@ export function GitHubSyncStatus({
       setFeedback(err.message || "Sync failed");
     } finally {
       setIsSyncing(false);
-      setTimeout(() => setFeedback(null), 3000);
+      setTimeout(() => setFeedback(null), 4000);
     }
   };
 
-  if (!config.token?.trim() || !config.owner?.trim() || !config.repo?.trim()) {
+  if (!isConfigured) {
     return (
       <Button
         variant="outline"
@@ -58,7 +60,10 @@ export function GitHubSyncStatus({
     );
   }
 
-  const tooltipText = `Repository: ${config.owner}/${config.repo}\nLast synced: ${
+  const isError = config.syncStatus === "error" || !!config.lastSyncError;
+  const tooltipText = `Repository: ${config.owner}/${config.repo}\nBranch: ${config.branch || "main"}\nStatus: ${
+    isError ? `Error (${config.lastSyncError || "Failed"})` : "Connected"
+  }\nLast synced: ${
     config.lastSyncTime ? `${formatTimeAgo(config.lastSyncTime)} (${new Date(config.lastSyncTime).toLocaleString()})` : "Never"
   }`;
 
@@ -69,17 +74,23 @@ export function GitHubSyncStatus({
         size="sm"
         onClick={handleSyncNow}
         disabled={isSyncing}
-        className="gap-1.5 font-bold"
+        className={`gap-1.5 font-bold ${isError ? "border-destructive/60 text-destructive hover:bg-destructive/10" : ""}`}
         title={tooltipText}
       >
-        <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin text-primary" : "text-primary"}`} />
+        {isSyncing ? (
+          <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
+        ) : isError ? (
+          <AlertCircle className="w-3.5 h-3.5 text-destructive" />
+        ) : (
+          <Cloud className="w-3.5 h-3.5 text-primary" />
+        )}
         <span className="hidden sm:inline">
-          {isSyncing ? "Syncing..." : "Sync Vault"}
+          {isSyncing ? "Syncing..." : isError ? "Sync Error" : "Sync Vault"}
         </span>
       </Button>
 
       {feedback && (
-        <span className="text-xs font-semibold text-primary animate-in fade-in">
+        <span className={`text-xs font-semibold max-w-[200px] truncate animate-in fade-in ${isError ? "text-destructive" : "text-primary"}`}>
           {feedback}
         </span>
       )}
