@@ -2,6 +2,7 @@
 import { getGitHubConfig, saveGitHubConfig } from "../lib/metadataStore";
 import { syncVaultToGitHub } from "../lib/githubSync";
 import { createBookmark } from "../lib/chromeBookmarks";
+import { directFetchPageDetails } from "../lib/fetcher";
 
 // Set up Context Menus on install
 chrome.runtime.onInstalled.addListener(() => {
@@ -119,5 +120,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     });
     return true;
+  }
+
+  if (message.action === "FETCH_PAGE_DETAILS") {
+    directFetchPageDetails(message.url, message.scope)
+      .then((result) => {
+        sendResponse({ success: true, result });
+      })
+      .catch((err) => {
+        sendResponse({ success: false, error: err.message || "Fetch failed" });
+      });
+    return true; // Keep message channel open for async response
   }
 });

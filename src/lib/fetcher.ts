@@ -17,8 +17,191 @@ export interface FetchResult {
   fetchedImages?: string[];
 }
 
-// Fetch and parse page metadata + HTTP status + Redirect detection
-export async function fetchLivePageDetails(
+// Decode HTML entities safely without invoking the browser DOM
+function decodeHtmlEntities(str: string): string {
+  if (!str) return "";
+  return str
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&#x2F;/g, "/")
+    .replace(/&mdash;/g, "—")
+    .replace(/&ndash;/g, "–")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, code) => {
+      try {
+        return String.fromCharCode(Number(code));
+      } catch {
+        return "";
+      }
+    })
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => {
+      try {
+        return String.fromCharCode(parseInt(code, 16));
+      } catch {
+        return "";
+      }
+    });
+}
+
+// Extract meta tags by property / name / itemprop
+function extractMetaTags(html: string): Record<string, string> {
+  const meta: Record<string, string> = {};
+  const metaTagRegex = /<meta\b[^>]*>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = metaTagRegex.exec(html)) !== null) {
+    const tag = match[0];
+    const nameMatch = tag.match(/(?:name|property|itemprop|http-equiv)\s*=\s*["']([^"']+)["']/i);
+    const contentMatch =
+      tag.match(/content\s*=\s*["']([^"']*)["']/i) ||
+      tag.match(/content\s*=\s*([^\s>]+)/i);
+
+    if (nameMatch && contentMatch) {
+      const key = nameMatch[1].toLowerCase().trim();
+      const val = decodeHtmlEntities(contentMatch[1].trim());
+      if (val && !meta[key]) {
+        meta[key] = val;
+      }
+    }
+  }
+  return meta;
+}
+
+// Extract title from <title> tag or OpenGraph fallback
+function extractTitle(html: string, meta: Record<string, string>): string {
+  if (meta["og:title"]) return meta["og:title"];
+  if (meta["twitter:title"]) return meta["twitter:title"];
+
+  const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
+  if (titleMatch) {
+    return decodeHtmlEntities(titleMatch[1].replace(/<[^>]+>/g, "").trim());
+  }
+  return "";
+}
+
+// Extract description
+function extractDescription(meta: Record<string, string>): string {
+  return (
+    meta["description"] ||
+    meta["og:description"] ||
+    meta["twitter:description"] ||
+    ""
+  );
+}
+
+// Extract OpenGraph / Twitter Image
+function extractOgImage(meta: Record<string, string>, baseUrl: string): string {
+  const imgUrl =
+    meta["og:image"] ||
+    meta["twitter:image"] ||
+    meta["twitter:image:src"] ||
+    "";
+  if (!imgUrl) return "";
+
+  try {
+    return new URL(imgUrl, baseUrl).href;
+  } catch {
+    return imgUrl.startsWith("http") ? imgUrl : "";
+  }
+}
+
+// Extract Favicon from link tags or Google S2 fallback
+function extractFavicon(html: string, baseUrl: string): string {
+  const iconLinkRegex = /<link\b[^>]*\brel\s*=\s*["']?(?:shortcut\s+icon|icon|apple-touch-icon)["']?[^>]*>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = iconLinkRegex.exec(html)) !== null) {
+    const tag = match[0];
+    const hrefMatch =
+      tag.match(/href\s*=\s*["']([^"']+)["']/i) ||
+      tag.match(/href\s*=\s*([^\s>]+)/i);
+    if (hrefMatch) {
+      try {
+        const fullUrl = new URL(hrefMatch[1].trim(), baseUrl).href;
+        if (fullUrl.startsWith("http")) return fullUrl;
+      } catch {}
+    }
+  }
+
+  // Fallback to Google S2 Favicon API
+  try {
+    const host = new URL(baseUrl).hostname;
+    return `https://www.google.com/s2/favicons?domain=${host}&sz=64`;
+  } catch {
+    return "";
+  }
+}
+
+// Extract keywords & suggested tags
+function extractSuggestedTags(meta: Record<string, string>): string[] {
+  const keywords = meta["keywords"] || meta["news_keywords"] || "";
+  const tags = new Set<string>();
+  if (keywords) {
+    keywords.split(",").forEach((k) => {
+      const clean = normalizeTag(k);
+      if (clean.length > 1 && clean.length < 25) tags.add(clean);
+    });
+  }
+  return Array.from(tags).slice(0, 6);
+}
+
+// Extract in-page gallery images
+function extractPageImages(html: string, baseUrl: string): string[] {
+  const images: string[] = [];
+  const imgRegex = /<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = imgRegex.exec(html)) !== null) {
+    const src = match[1];
+    if (src && !src.startsWith("data:")) {
+      try {
+        const full = new URL(src, baseUrl).href;
+        if (
+          full.startsWith("http") &&
+          !full.includes("tracking") &&
+          !full.includes("pixel") &&
+          !full.includes("1x1") &&
+          !images.includes(full)
+        ) {
+          images.push(full);
+          if (images.length >= 8) break;
+        }
+      } catch {}
+    }
+  }
+  return images;
+}
+
+// Extract readable article text
+function extractReaderText(html: string): string {
+  const articleMatch = html.match(/<(?:article|main)\b[^>]*>([\s\S]*?)<\/(?:article|main)\s*>/i);
+  const rawBlock = articleMatch ? articleMatch[1] : html;
+
+  const pRegex = /<p\b[^>]*>([\s\S]*?)<\/p\s*>/gi;
+  let pMatch: RegExpExecArray | null;
+  const paragraphs: string[] = [];
+
+  while ((pMatch = pRegex.exec(rawBlock)) !== null) {
+    const cleanText = pMatch[1]
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (cleanText.length > 30) {
+      paragraphs.push(decodeHtmlEntities(cleanText));
+      if (paragraphs.length >= 10) break;
+    }
+  }
+
+  return paragraphs.join("\n\n").slice(0, 5000);
+}
+
+// Direct network fetch and string metadata extraction (Used by background service worker)
+export async function directFetchPageDetails(
   url: string,
   scope: FetchScope = "all",
   signal?: AbortSignal
@@ -83,7 +266,7 @@ export async function fetchLivePageDetails(
       };
     }
 
-    // Only parse HTML if scope includes embeds or all
+    // If screenshots_only, skip HTML body parsing
     if (scope === "screenshots_only") {
       return {
         url,
@@ -96,104 +279,15 @@ export async function fetchLivePageDetails(
 
     const htmlText = await res.text();
 
-    // Strip scripts, stylesheets, preloads, and embedded frames before DOM parsing
-    // to prevent Chromium from executing scripts, loading external CSS/fonts, or triggering CSP violations
-    const sanitizedHtml = htmlText
-      .replace(/<script\b[\s\S]*?<\/script\s*>/gi, "")
-      .replace(/<script\b[^>]*\/?>/gi, "")
-      .replace(/<noscript\b[\s\S]*?<\/noscript\s*>/gi, "")
-      .replace(/<style\b[\s\S]*?<\/style\s*>/gi, "")
-      .replace(/<iframe\b[\s\S]*?<\/iframe\s*>/gi, "")
-      .replace(/<iframe\b[^>]*\/?>/gi, "")
-      .replace(/<link\b[^>]*\b(?:preload|prefetch|modulepreload|stylesheet|prerender)\b[^>]*\/?>/gi, "");
-
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(sanitizedHtml, "text/html");
-
-    const getMeta = (names: string[]) => {
-      for (const name of names) {
-        const el = doc.querySelector(
-          `meta[name='${name}'], meta[property='${name}'], meta[itemprop='${name}']`
-        );
-        if (el) {
-          const val = el.getAttribute("content");
-          if (val) return val.trim();
-        }
-      }
-      return "";
-    };
-
-    const title =
-      getMeta(["og:title", "twitter:title"]) ||
-      doc.title ||
-      "";
-
-    const description =
-      getMeta(["description", "og:description", "twitter:description"]) ||
-      "";
-
-    let ogImage = getMeta(["og:image", "twitter:image", "twitter:image:src"]);
-    if (ogImage && !ogImage.startsWith("http")) {
-      try {
-        ogImage = new URL(ogImage, url).href;
-      } catch {}
-    }
-
-    // Favicon resolution
-    let favicon = "";
-    const iconEl = doc.querySelector("link[rel*='icon'], link[rel='apple-touch-icon']");
-    if (iconEl) {
-      const href = iconEl.getAttribute("href");
-      if (href) {
-        try {
-          favicon = new URL(href, url).href;
-        } catch {}
-      }
-    }
-    if (!favicon) {
-      try {
-        const host = new URL(url).hostname;
-        favicon = `https://www.google.com/s2/favicons?domain=${host}&sz=64`;
-      } catch {}
-    }
-
-    // Keywords and suggested tags
-    const keywords = getMeta(["keywords", "news_keywords"]);
-    const tags = new Set<string>();
-    if (keywords) {
-      keywords.split(",").forEach((k) => {
-        const clean = normalizeTag(k);
-        if (clean.length > 1 && clean.length < 25) tags.add(clean);
-      });
-    }
-
-    // Extract extra in-page images for Browse Mode media gallery
-    const fetchedImages: string[] = [];
-    const imgEls = doc.querySelectorAll("img[src]");
-    for (const img of Array.from(imgEls)) {
-      const src = img.getAttribute("src");
-      if (src && !src.startsWith("data:")) {
-        try {
-          const fullSrc = new URL(src, url).href;
-          if (
-            fullSrc.startsWith("http") &&
-            !fullSrc.includes("tracking") &&
-            !fullSrc.includes("pixel") &&
-            !fetchedImages.includes(fullSrc)
-          ) {
-            fetchedImages.push(fullSrc);
-            if (fetchedImages.length >= 8) break;
-          }
-        } catch {}
-      }
-    }
-
-    // Article body for browse mode reader
-    let readerText = "";
-    const article = doc.querySelector("article") || doc.querySelector("main");
-    if (article) {
-      readerText = (article as HTMLElement).innerText?.slice(0, 5000) || "";
-    }
+    // Pure regex/string metadata extraction (zero DOMParser, 100% CSP safe)
+    const meta = extractMetaTags(htmlText);
+    const title = extractTitle(htmlText, meta);
+    const description = extractDescription(meta);
+    const ogImage = extractOgImage(meta, url);
+    const favicon = extractFavicon(htmlText, url);
+    const suggestedTags = extractSuggestedTags(meta);
+    const fetchedImages = extractPageImages(htmlText, url);
+    const readerText = extractReaderText(htmlText);
 
     return {
       url,
@@ -205,9 +299,9 @@ export async function fetchLivePageDetails(
       description: description || undefined,
       ogImage: ogImage || undefined,
       favicon: favicon || undefined,
-      suggestedTags: Array.from(tags).slice(0, 6),
+      suggestedTags: suggestedTags.length > 0 ? suggestedTags : undefined,
       readerText: readerText || undefined,
-      fetchedImages,
+      fetchedImages: fetchedImages.length > 0 ? fetchedImages : undefined,
     };
   } catch (err: any) {
     clearTimeout(timeoutId);
@@ -227,6 +321,74 @@ export async function fetchLivePageDetails(
       httpStatusText: isTimeout ? "Timeout (408)" : err.message || "Network Error",
     };
   }
+}
+
+// Fetch and parse page metadata + HTTP status + Redirect detection
+// Delegates to background ServiceWorker when in window context to avoid document HTTP Link preload header evaluation
+export async function fetchLivePageDetails(
+  url: string,
+  scope: FetchScope = "all",
+  signal?: AbortSignal
+): Promise<FetchResult> {
+  // If in browser window context and chrome.runtime is available, delegate to background service worker
+  const isWindowContext = typeof window !== "undefined" && typeof document !== "undefined";
+  const hasRuntime = typeof chrome !== "undefined" && !!chrome.runtime?.sendMessage;
+
+  if (isWindowContext && hasRuntime) {
+    return new Promise<FetchResult>((resolve) => {
+      let resolved = false;
+
+      const onAbort = () => {
+        if (!resolved) {
+          resolved = true;
+          resolve({
+            url,
+            httpStatus: 408,
+            httpStatusText: "Aborted",
+          });
+        }
+      };
+
+      if (signal) {
+        if (signal.aborted) {
+          return resolve({ url, httpStatus: 408, httpStatusText: "Aborted" });
+        }
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+
+      try {
+        chrome.runtime.sendMessage(
+          { action: "FETCH_PAGE_DETAILS", url, scope },
+          (response) => {
+            if (signal) signal.removeEventListener("abort", onAbort);
+            if (resolved) return;
+            resolved = true;
+
+            if (chrome.runtime.lastError || !response || !response.success) {
+              // Fallback to direct fetch if background worker is unavailable
+              directFetchPageDetails(url, scope, signal).then(resolve).catch((err) => {
+                resolve({
+                  url,
+                  httpStatus: 0,
+                  httpStatusText: err.message || "Fetch failed",
+                });
+              });
+            } else {
+              resolve(response.result);
+            }
+          }
+        );
+      } catch {
+        if (!resolved) {
+          resolved = true;
+          directFetchPageDetails(url, scope, signal).then(resolve);
+        }
+      }
+    });
+  }
+
+  // Inside background service worker or headless environment
+  return directFetchPageDetails(url, scope, signal);
 }
 
 // Batch refetch executor with concurrency & cancellation support
