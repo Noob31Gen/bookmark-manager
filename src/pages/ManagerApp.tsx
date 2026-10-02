@@ -77,6 +77,7 @@ export function ManagerApp() {
   const [sortField, setSortField] = useState<SortField>("date-desc");
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
   const [gitHubConfig, setGitHubConfig] = useState<GitHubConfig>(DEFAULT_GITHUB_CONFIG);
+  const [isReloading, setIsReloading] = useState(false);
   const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_USER_PREFERENCES);
 
   // Multi-selection state
@@ -126,6 +127,15 @@ export function ManagerApp() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleReloadVault = async () => {
+    setIsReloading(true);
+    await refreshData();
+    // Brief visual feedback
+    setTimeout(() => {
+      setIsReloading(false);
+    }, 400);
   };
 
   useEffect(() => {
@@ -541,6 +551,8 @@ export function ManagerApp() {
         onOpenAddFolder={() => setNewFolderModalOpen(true)}
         onOpenSettings={() => setSettingsModalOpen(true)}
         onRefetchAll={handleRefetchAll}
+        onReloadVault={handleReloadVault}
+        isReloading={isReloading}
         gitHubConfig={gitHubConfig}
         onGitHubConfigChange={refreshData}
         totalBookmarks={allBookmarks.length}

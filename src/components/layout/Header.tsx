@@ -6,6 +6,7 @@ import {
   Sparkles,
   FolderPlus,
   RefreshCw,
+  RotateCw,
   ArrowUpDown,
 } from "lucide-react";
 import { Button } from "../ui/Button";
@@ -22,6 +23,8 @@ interface HeaderProps {
   onOpenAddFolder: () => void;
   onOpenSettings: () => void;
   onRefetchAll: () => void;
+  onReloadVault: () => void;
+  isReloading?: boolean;
   gitHubConfig: GitHubConfig;
   onGitHubConfigChange: () => void;
   totalBookmarks: number;
@@ -36,6 +39,8 @@ export function Header({
   onOpenAddFolder,
   onOpenSettings,
   onRefetchAll,
+  onReloadVault,
+  isReloading,
   gitHubConfig,
   onGitHubConfigChange,
   totalBookmarks,
@@ -118,13 +123,26 @@ export function Header({
             </button>
           </div>
 
+          {/* Reload Local Vault Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onReloadVault}
+            disabled={isReloading}
+            className="gap-1.5 font-bold text-xs flex-shrink-0"
+            title="Reload bookmarks, folders, and assets from Chrome & storage without network refetching"
+          >
+            <RotateCw className={`w-3.5 h-3.5 ${isReloading ? "animate-spin text-primary" : "text-foreground"}`} />
+            <span className="hidden xl:inline">{isReloading ? "Reloading..." : "Reload Vault"}</span>
+          </Button>
+
           {/* Refetch All Button */}
           <Button
             variant="outline"
             size="sm"
             onClick={onRefetchAll}
             className="gap-1.5 font-bold text-xs flex-shrink-0"
-            title="Refetch HTTP Status, Icons, and Embeds for all bookmarks"
+            title="Refetch HTTP Status, Icons, and Embeds for all bookmarks over the network"
           >
             <RefreshCw className="w-3.5 h-3.5 text-primary" />
             <span className="hidden xl:inline">Refetch All</span>

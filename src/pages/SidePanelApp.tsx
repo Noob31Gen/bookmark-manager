@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   HelpCircle,
+  RotateCw,
 } from "lucide-react";
 import { EnhancedBookmark, FolderNode } from "../lib/types";
 import {
@@ -41,6 +42,7 @@ export function SidePanelApp() {
     "healthy" | "redirects" | "errors" | "unfetched" | null
   >(null);
   const [quickSaving, setQuickSaving] = useState(false);
+  const [isReloading, setIsReloading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Browse mode & Edit modal state
@@ -57,6 +59,14 @@ export function SidePanelApp() {
       const updated = flat.find((b) => b.id === browsingBookmark.id);
       if (updated) setBrowsingBookmark(updated);
     }
+  };
+
+  const handleReloadVault = async () => {
+    setIsReloading(true);
+    await refreshData();
+    setTimeout(() => {
+      setIsReloading(false);
+    }, 400);
   };
 
   useEffect(() => {
@@ -207,6 +217,15 @@ export function SidePanelApp() {
         </div>
 
         <div className="flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="icon-xs"
+            onClick={handleReloadVault}
+            disabled={isReloading}
+            title="Reload bookmarks and assets from Chrome storage"
+          >
+            <RotateCw className={`w-3 h-3 ${isReloading ? "animate-spin text-primary" : ""}`} />
+          </Button>
           <ThemeToggle />
           <Button
             variant="outline"
