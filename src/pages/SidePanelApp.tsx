@@ -423,7 +423,7 @@ export function SidePanelApp() {
                       setBrowsingBookmark(b);
                       setBrowseModalOpen(true);
                     }}
-                    className="p-1 hover:text-primary text-muted-foreground"
+                    className="pop-3d p-1 bg-card hover:bg-muted hover:text-primary text-muted-foreground transition-colors cursor-pointer"
                     title="Open Browse Mode"
                   >
                     <Compass className="w-3 h-3 text-primary" />
@@ -431,7 +431,7 @@ export function SidePanelApp() {
 
                   <button
                     onClick={() => updateBookmark(b.id, { isFavorite: !b.isFavorite }).then(refreshData)}
-                    className="p-1 text-muted-foreground hover:text-amber-400"
+                    className="pop-3d p-1 bg-card hover:bg-muted text-muted-foreground hover:text-amber-400 transition-colors cursor-pointer"
                   >
                     <Star
                       className={`w-3 h-3 ${
@@ -442,7 +442,7 @@ export function SidePanelApp() {
 
                   <button
                     onClick={() => handleCopy(b)}
-                    className="p-1 text-muted-foreground hover:text-primary"
+                    className="pop-3d p-1 bg-card hover:bg-muted text-muted-foreground hover:text-primary transition-colors cursor-pointer"
                     title="Copy Link"
                   >
                     {copiedId === b.id ? (
@@ -456,7 +456,7 @@ export function SidePanelApp() {
                     href={b.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="p-1 text-muted-foreground hover:text-primary"
+                    className="pop-3d p-1 bg-card hover:bg-muted text-muted-foreground hover:text-primary transition-colors cursor-pointer"
                     title="Open Link"
                   >
                     <ExternalLink className="w-3 h-3" />

@@ -236,11 +236,11 @@ export function BookmarkCard({
           <ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />
         </a>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           {/* Browse Mode Button */}
           <button
             onClick={() => onOpenBrowse(bookmark)}
-            className="p-1 hover:text-primary text-muted-foreground"
+            className="pop-3d p-1.5 bg-card hover:bg-muted hover:text-primary text-muted-foreground transition-colors cursor-pointer"
             title="Open Browse Mode (Expanded View)"
           >
             <Compass className="w-3.5 h-3.5 text-primary" />
@@ -252,7 +252,7 @@ export function BookmarkCard({
               e.stopPropagation();
               onCaptureScreenshot(bookmark);
             }}
-            className="p-1 hover:text-primary text-muted-foreground"
+            className="pop-3d p-1.5 bg-card hover:bg-muted hover:text-primary text-muted-foreground transition-colors cursor-pointer"
             title="Capture / Update Screenshot"
           >
             <Camera className="w-3.5 h-3.5" />
@@ -260,7 +260,7 @@ export function BookmarkCard({
 
           <button
             onClick={handleCopy}
-            className="p-1 hover:text-primary text-muted-foreground"
+            className="pop-3d p-1.5 bg-card hover:bg-muted hover:text-primary text-muted-foreground transition-colors cursor-pointer"
             title="Copy URL"
           >
             {copied ? (
@@ -272,7 +272,7 @@ export function BookmarkCard({
 
           <button
             onClick={() => onEdit(bookmark)}
-            className="p-1 hover:text-primary text-muted-foreground"
+            className="pop-3d p-1.5 bg-card hover:bg-muted hover:text-primary text-muted-foreground transition-colors cursor-pointer"
             title="Edit Bookmark"
           >
             <Edit2 className="w-3.5 h-3.5" />
@@ -280,7 +280,7 @@ export function BookmarkCard({
 
           <button
             onClick={() => onDelete(bookmark.id)}
-            className="p-1 hover:text-destructive text-muted-foreground"
+            className="pop-3d p-1.5 bg-card hover:bg-muted hover:text-destructive text-muted-foreground transition-colors cursor-pointer"
             title="Delete Bookmark"
           >
             <Trash2 className="w-3.5 h-3.5" />

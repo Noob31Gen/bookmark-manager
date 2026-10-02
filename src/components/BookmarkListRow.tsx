@@ -162,11 +162,11 @@ export function BookmarkListRow({
       </div>
 
       {/* Actions */}
-      <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+      <div className="flex items-center gap-1.5 opacity-80 group-hover:opacity-100 transition-opacity">
         {/* Browse Mode Button */}
         <button
           onClick={() => onOpenBrowse(bookmark)}
-          className="p-1.5 hover:text-primary text-muted-foreground"
+          className="pop-3d p-1.5 bg-card hover:bg-muted hover:text-primary text-muted-foreground transition-colors cursor-pointer"
           title="Open Browse Mode (Expanded View)"
         >
           <Compass className="w-3.5 h-3.5 text-primary" />
@@ -174,7 +174,7 @@ export function BookmarkListRow({
 
         <button
           onClick={handleCopy}
-          className="p-1.5 hover:text-primary text-muted-foreground"
+          className="pop-3d p-1.5 bg-card hover:bg-muted hover:text-primary text-muted-foreground transition-colors cursor-pointer"
           title="Copy URL"
         >
           {copied ? (
@@ -186,7 +186,7 @@ export function BookmarkListRow({
 
         <button
           onClick={() => onEdit(bookmark)}
-          className="p-1.5 hover:text-primary text-muted-foreground"
+          className="pop-3d p-1.5 bg-card hover:bg-muted hover:text-primary text-muted-foreground transition-colors cursor-pointer"
           title="Edit"
         >
           <Edit2 className="w-3.5 h-3.5" />
@@ -194,7 +194,7 @@ export function BookmarkListRow({
 
         <button
           onClick={() => onDelete(bookmark.id)}
-          className="p-1.5 hover:text-destructive text-muted-foreground"
+          className="pop-3d p-1.5 bg-card hover:bg-muted hover:text-destructive text-muted-foreground transition-colors cursor-pointer"
           title="Delete"
         >
           <Trash2 className="w-3.5 h-3.5" />
@@ -204,7 +204,7 @@ export function BookmarkListRow({
           href={bookmark.url}
           target="_blank"
           rel="noreferrer"
-          className="p-1.5 hover:text-primary text-muted-foreground"
+          className="pop-3d p-1.5 bg-card hover:bg-muted hover:text-primary text-muted-foreground transition-colors cursor-pointer"
           title="Open in new tab"
         >
           <ExternalLink className="w-3.5 h-3.5" />
