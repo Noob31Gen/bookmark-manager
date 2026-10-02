@@ -456,14 +456,43 @@ export async function syncVaultToGitHub(
       }
     >();
 
-    // Complete snapshot index
+    // Clean metadata and bookmarks for cloud storage: replace large data URL screenshots with asset path references
+    const cloudMetadata: Record<string, BookmarkMetadata> = {};
+    for (const [id, meta] of Object.entries(metadata)) {
+      cloudMetadata[id] = {
+        ...meta,
+        screenshot: meta.screenshot ? `assets/screenshots/${id}.webp` : undefined,
+      };
+    }
+
+    const cloudBookmarks = flatList.map((b) => ({
+      id: b.id,
+      parentId: b.parentId,
+      title: b.title,
+      url: b.url,
+      domain: getDomain(b.url),
+      dateAdded: b.dateAdded,
+      tags: b.tags || [],
+      description: b.description || "",
+      notes: b.notes || "",
+      httpStatus: b.httpStatus,
+      httpStatusText: b.httpStatusText,
+      finalUrl: b.finalUrl,
+      isFavorite: b.isFavorite || false,
+      favicon: b.favicon,
+      ogImage: b.ogImage,
+      screenshot: b.screenshot ? `assets/screenshots/${b.id}.webp` : undefined,
+      githubSha: b.githubSha,
+      lastChecked: b.lastChecked,
+    }));
+
+    // Complete snapshot index (clean, lightweight JSON)
     const vaultIndex = {
       version: "2.1.0",
       syncedAt: new Date().toISOString(),
       bookmarkCount: flatList.length,
-      tree,
-      bookmarks: flatList,
-      metadata,
+      bookmarks: cloudBookmarks,
+      metadata: cloudMetadata,
     };
 
     treeMap.set(".noob31/vault-index.json", {
@@ -507,6 +536,7 @@ export async function syncVaultToGitHub(
         isFavorite: b.isFavorite || false,
         favicon: b.favicon,
         ogImage: b.ogImage,
+        screenshot: b.screenshot ? `assets/screenshots/${b.id}.webp` : undefined,
         lastChecked: b.lastChecked,
       };
 
