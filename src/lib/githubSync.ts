@@ -92,13 +92,20 @@ export function isValidGitSha(sha?: string | null): boolean {
 
 // Strictly cleans path segments for Git Tree compatibility
 export function sanitizePathSegment(name: string): string {
-  return (name || "untitled")
-    .replace(/[\x00-\x1F\x7F-\x9F]/g, "") // Strip all invisible control characters
-    .replace(/[/\\?%*:|"<>]/g, "-") // Replace forbidden path chars
+  let cleaned = (name || "untitled")
+    .replace(/[\x00-\x1F\x7F-\x9F]/g, "") // Strip invisible control characters
+    .replace(/[/\\?%*:|"<>]/g, "-") // Replace forbidden chars
     .replace(/\s+/g, " ") // Collapse whitespace
-    .replace(/^\.+|\.+$/g, "") // Strip leading/trailing periods
-    .replace(/^ +| +$/g, "") // Strip leading/trailing spaces
-    .trim() || "item";
+    .trim();
+
+  // Disallow dot-dot (directory traversal)
+  if (cleaned === ".." || cleaned === ".") return "item";
+  if (cleaned.toLowerCase() === ".git") return "git-dir";
+
+  // Disallow trailing periods on Windows/Git filenames (e.g. "foo.")
+  cleaned = cleaned.replace(/\.+$/g, "");
+
+  return cleaned || "item";
 }
 
 export function cleanGitPath(path: string): string {
@@ -478,7 +485,8 @@ export async function syncVaultToGitHub(
     }
     buildFolderMap(folderTree);
 
-    // 3. Inspect parent tree to preserve non-vault files (.github, LICENSE, .gitignore)
+    // 3. Inspect parent tree to discover existing blobs and preserve non-vault files (.github, LICENSE, etc.)
+    const existingRemoteBlobs = new Map<string, string>();
     const preservedNonVaultItems: Array<{ path: string; mode: "100644"; type: "blob"; sha: string }> = [];
     if (parentCommitSha && isValidGitSha(parentCommitSha)) {
       try {
@@ -494,21 +502,23 @@ export async function syncVaultToGitHub(
             if (treeRes.ok) {
               const baseTreeData = await treeRes.json();
               for (const item of baseTreeData.tree || []) {
-                if (
-                  item.type === "blob" &&
-                  isValidGitSha(item.sha) &&
-                  !item.path.startsWith("bookmarks/") &&
-                  !item.path.startsWith("assets/") &&
-                  !item.path.startsWith(".noob31/") &&
-                  item.path !== "README.md" &&
-                  item.path !== "bookmarks-vault.json"
-                ) {
-                  preservedNonVaultItems.push({
-                    path: cleanGitPath(item.path),
-                    mode: "100644",
-                    type: "blob",
-                    sha: item.sha,
-                  });
+                if (item.type === "blob" && isValidGitSha(item.sha)) {
+                  const cleanedPath = cleanGitPath(item.path);
+                  existingRemoteBlobs.set(cleanedPath, item.sha);
+                  if (
+                    !cleanedPath.startsWith("bookmarks/") &&
+                    !cleanedPath.startsWith("assets/") &&
+                    !cleanedPath.startsWith(".noob31/") &&
+                    cleanedPath !== "README.md" &&
+                    cleanedPath !== "bookmarks-vault.json"
+                  ) {
+                    preservedNonVaultItems.push({
+                      path: cleanedPath,
+                      mode: "100644",
+                      type: "blob",
+                      sha: item.sha,
+                    });
+                  }
                 }
               }
             }
@@ -531,35 +541,110 @@ export async function syncVaultToGitHub(
       }
     >();
 
+    // Prepare screenshot blob uploads (skip anything already present in local cache OR in remote Git tree)
+    const metadataUpdatesToPersist: Record<string, Partial<BookmarkMetadata>> = {};
+    const screenshotUploadTasks: Array<{ id: string; assetPath: string; base64: string }> = [];
+
+    for (const b of flatList) {
+      if (b.screenshot && b.screenshot.startsWith("data:image/")) {
+        const assetPath = cleanGitPath(`assets/screenshots/${b.id}.webp`);
+        const knownSha = (b.githubSha && isValidGitSha(b.githubSha))
+          ? b.githubSha
+          : existingRemoteBlobs.get(assetPath);
+
+        if (knownSha && isValidGitSha(knownSha)) {
+          // Already uploaded to Git! Reuse SHA directly with zero network blob upload overhead
+          treeMap.set(assetPath, {
+            path: assetPath,
+            mode: "100644",
+            type: "blob",
+            sha: knownSha,
+          });
+          if (b.githubSha !== knownSha) {
+            metadataUpdatesToPersist[b.id] = { githubSha: knownSha };
+          }
+        } else {
+          const base64Data = b.screenshot.split(",")[1];
+          if (base64Data) {
+            screenshotUploadTasks.push({
+              id: b.id,
+              assetPath,
+              base64: base64Data,
+            });
+          }
+        }
+      }
+    }
+
+    // Upload only genuinely new/unseen screenshots concurrently
+    if (screenshotUploadTasks.length > 0) {
+      await runWithConcurrency(screenshotUploadTasks, 5, async (task) => {
+        try {
+          const blobSha = await createGitBlob(config.token, repoPath, task.base64, "base64");
+          if (blobSha && isValidGitSha(blobSha)) {
+            treeMap.set(task.assetPath, {
+              path: task.assetPath,
+              mode: "100644",
+              type: "blob",
+              sha: blobSha,
+            });
+            metadataUpdatesToPersist[task.id] = { githubSha: blobSha };
+          }
+        } catch (blobErr) {
+          console.warn(`Screenshot upload skipped for bookmark ${task.id}:`, blobErr);
+        }
+      });
+    }
+
+    // Persist all newly discovered/created blob SHAs in local storage in a single atomic batch
+    if (Object.keys(metadataUpdatesToPersist).length > 0) {
+      await bulkUpdateMetadata(metadataUpdatesToPersist);
+    }
+
     // Clean metadata and bookmarks for cloud storage: replace large data URL screenshots with asset path references
     const cloudMetadata: Record<string, BookmarkMetadata> = {};
     for (const [id, meta] of Object.entries(metadata)) {
+      const assetPath = `assets/screenshots/${id}.webp`;
+      const assignedSha =
+        metadataUpdatesToPersist[id]?.githubSha ||
+        meta.githubSha ||
+        existingRemoteBlobs.get(assetPath);
+
       cloudMetadata[id] = {
         ...meta,
-        screenshot: meta.screenshot ? `assets/screenshots/${id}.webp` : undefined,
+        screenshot: meta.screenshot ? assetPath : undefined,
+        githubSha: assignedSha,
       };
     }
 
-    const cloudBookmarks = flatList.map((b) => ({
-      id: b.id,
-      parentId: b.parentId,
-      title: b.title,
-      url: b.url,
-      domain: getDomain(b.url),
-      dateAdded: b.dateAdded,
-      tags: b.tags || [],
-      description: b.description || "",
-      notes: b.notes || "",
-      httpStatus: b.httpStatus,
-      httpStatusText: b.httpStatusText,
-      finalUrl: b.finalUrl,
-      isFavorite: b.isFavorite || false,
-      favicon: b.favicon,
-      ogImage: b.ogImage,
-      screenshot: b.screenshot ? `assets/screenshots/${b.id}.webp` : undefined,
-      githubSha: b.githubSha,
-      lastChecked: b.lastChecked,
-    }));
+    const cloudBookmarks = flatList.map((b) => {
+      const assetPath = `assets/screenshots/${b.id}.webp`;
+      const assignedSha =
+        metadataUpdatesToPersist[b.id]?.githubSha ||
+        b.githubSha ||
+        existingRemoteBlobs.get(assetPath);
+
+      return {
+        id: b.id,
+        parentId: b.parentId,
+        title: b.title,
+        url: b.url,
+        domain: getDomain(b.url),
+        dateAdded: b.dateAdded,
+        tags: b.tags || [],
+        description: b.description || "",
+        notes: b.notes || "",
+        httpStatus: b.httpStatus,
+        httpStatusText: b.httpStatusText,
+        finalUrl: b.finalUrl,
+        isFavorite: b.isFavorite || false,
+        favicon: b.favicon,
+        ogImage: b.ogImage,
+        screenshot: b.screenshot ? assetPath : undefined,
+        githubSha: assignedSha,
+        lastChecked: b.lastChecked,
+      };
+    });
 
     // Complete snapshot index (clean, lightweight JSON)
     const vaultIndex = {
@@ -586,14 +671,17 @@ export async function syncVaultToGitHub(
       content: readmeContent,
     });
 
-    // Bookmark JSON entries & Screenshot blobs
-    const screenshotUploadTasks: Array<{ id: string; base64: string; existingSha?: string }> = [];
-
+    // Bookmark JSON entries
     for (const b of flatList) {
       const folderPath = folderMap[b.parentId || ""] || "Bookmarks Bar";
       const cleanFolder = folderPath.split("/").map(sanitizePathSegment).filter(Boolean).join("/") || "Bookmarks Bar";
       const fileSlug = sanitizePathSegment(b.title || b.id).slice(0, 50);
       const filePath = cleanGitPath(`bookmarks/${cleanFolder}/${fileSlug}_${b.id}.json`);
+      const assetPath = `assets/screenshots/${b.id}.webp`;
+      const assignedSha =
+        metadataUpdatesToPersist[b.id]?.githubSha ||
+        b.githubSha ||
+        existingRemoteBlobs.get(assetPath);
 
       const cleanBookmark = {
         id: b.id,
@@ -611,7 +699,8 @@ export async function syncVaultToGitHub(
         isFavorite: b.isFavorite || false,
         favicon: b.favicon,
         ogImage: b.ogImage,
-        screenshot: b.screenshot ? `assets/screenshots/${b.id}.webp` : undefined,
+        screenshot: b.screenshot ? assetPath : undefined,
+        githubSha: assignedSha,
         lastChecked: b.lastChecked,
       };
 
@@ -620,43 +709,6 @@ export async function syncVaultToGitHub(
         mode: "100644",
         type: "blob",
         content: JSON.stringify(cleanBookmark, null, 2),
-      });
-
-      if (b.screenshot && b.screenshot.startsWith("data:image/")) {
-        const base64Data = b.screenshot.split(",")[1];
-        if (base64Data) {
-          screenshotUploadTasks.push({
-            id: b.id,
-            base64: base64Data,
-            existingSha: b.githubSha,
-          });
-        }
-      }
-    }
-
-    // Upload screenshot blobs concurrently
-    if (screenshotUploadTasks.length > 0) {
-      await runWithConcurrency(screenshotUploadTasks, 5, async (task) => {
-        try {
-          const validExistingSha = isValidGitSha(task.existingSha) ? task.existingSha : undefined;
-          const blobSha =
-            validExistingSha ||
-            (await createGitBlob(config.token, repoPath, task.base64, "base64"));
-          if (blobSha && isValidGitSha(blobSha)) {
-            const assetPath = cleanGitPath(`assets/screenshots/${task.id}.webp`);
-            treeMap.set(assetPath, {
-              path: assetPath,
-              mode: "100644",
-              type: "blob",
-              sha: blobSha,
-            });
-            if (!validExistingSha) {
-              await saveBookmarkMetadata(task.id, { githubSha: blobSha });
-            }
-          }
-        } catch (blobErr) {
-          console.warn(`Screenshot upload skipped for bookmark ${task.id}:`, blobErr);
-        }
       });
     }
 
@@ -681,7 +733,7 @@ export async function syncVaultToGitHub(
       console.warn(`Git Tree API failed (${createTreeRes.status}): ${detailedMsg}, falling back to Contents API...`);
 
       // Robust fallback: commit main vault index & README directly via Contents API
-      const fallbackCommit = await forceCommitFile(
+      await forceCommitFile(
         config.token,
         repoPath,
         config.branch,
