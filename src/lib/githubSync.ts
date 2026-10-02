@@ -627,6 +627,7 @@ export async function syncVaultToGitHub(
       return {
         id: b.id,
         parentId: b.parentId,
+        folderPath: folderMap[b.parentId || ""] || "Bookmarks Bar",
         title: b.title,
         url: b.url,
         domain: getDomain(b.url),
@@ -651,6 +652,8 @@ export async function syncVaultToGitHub(
       version: "2.1.0",
       syncedAt: new Date().toISOString(),
       bookmarkCount: flatList.length,
+      folderMap,
+      folderTree,
       bookmarks: cloudBookmarks,
       metadata: cloudMetadata,
     };
@@ -686,6 +689,7 @@ export async function syncVaultToGitHub(
       const cleanBookmark = {
         id: b.id,
         parentId: b.parentId,
+        folderPath,
         title: b.title,
         url: b.url,
         domain: getDomain(b.url),
@@ -846,117 +850,243 @@ export async function syncVaultToGitHub(
   }
 }
 
-// --- Fetch Raw Vault Index from GitHub (Supports large files & Blob fallback) ---
-async function fetchRawVaultIndex(config: GitHubConfig): Promise<any | null> {
-  const repoPath = `${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`;
-  const targetPaths = [`.noob31/vault-index.json`, `bookmarks-vault.json`];
+// --- Helper to ensure nested Chrome folder paths exist ---
+export async function ensureChromeFolderPath(folderPath?: string): Promise<string> {
+  if (!folderPath || folderPath === "Bookmarks Bar" || folderPath === "bookmarks_bar") {
+    return "1";
+  }
 
-  for (const filePath of targetPaths) {
+  const rawSegments = folderPath
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (rawSegments.length === 0) return "1";
+
+  let currentParentId = "1";
+  let startIndex = 0;
+
+  const firstSegLower = rawSegments[0].toLowerCase();
+  if (
+    firstSegLower === "bookmarks bar" ||
+    firstSegLower === "bookmark bar" ||
+    firstSegLower === "bookmarks_bar"
+  ) {
+    currentParentId = "1";
+    startIndex = 1;
+  } else if (
+    firstSegLower === "other bookmarks" ||
+    firstSegLower === "other_bookmarks" ||
+    firstSegLower === "other"
+  ) {
+    currentParentId = "2";
+    startIndex = 1;
+  }
+
+  if (typeof chrome === "undefined" || !chrome.bookmarks) {
+    return "1";
+  }
+
+  for (let i = startIndex; i < rawSegments.length; i++) {
+    const segmentName = rawSegments[i];
     try {
-      const res = await githubRequest(
-        config.token,
-        `/repos/${repoPath}/contents/${filePath}?ref=${encodeURIComponent(config.branch)}`
+      const children: chrome.bookmarks.BookmarkTreeNode[] = await new Promise((resolve) => {
+        chrome.bookmarks.getChildren(currentParentId, (nodes) => {
+          resolve(nodes || []);
+        });
+      });
+
+      const matchingFolder = children.find(
+        (n) => !n.url && n.title.trim().toLowerCase() === segmentName.toLowerCase()
       );
 
-      if (res.ok) {
-        const data = await res.json();
-        // 1. Direct Base64 content
-        if (data.content) {
-          const jsonStr = safeB64Decode(data.content);
-          return JSON.parse(jsonStr);
-        }
-
-        // 2. Large file Git Blob API
-        if (data.sha) {
-          const blobRes = await githubRequest(config.token, `/repos/${repoPath}/git/blobs/${data.sha}`);
-          if (blobRes.ok) {
-            const blobData = await blobRes.json();
-            if (blobData.content) {
-              const rawText = safeB64Decode(blobData.content);
-              return JSON.parse(rawText);
+      if (matchingFolder) {
+        currentParentId = matchingFolder.id;
+      } else {
+        const created = await new Promise<chrome.bookmarks.BookmarkTreeNode>((resolve, reject) => {
+          chrome.bookmarks.create(
+            { parentId: currentParentId, title: segmentName },
+            (node) => {
+              if (chrome.runtime?.lastError) reject(chrome.runtime.lastError);
+              else resolve(node);
             }
-          }
-        }
-
-        // 3. Download URL
-        if (data.download_url) {
-          const downloadRes = await githubRequest(config.token, data.download_url);
-          if (downloadRes.ok) {
-            return await downloadRes.json();
-          }
-        }
+          );
+        });
+        currentParentId = created.id;
       }
-    } catch (err) {
-      console.warn(`Could not read ${filePath}:`, err);
+    } catch {
+      break;
     }
   }
 
-  // 4. Fallback: Reconstruct from Git Tree
+  return currentParentId;
+}
+
+interface RemoteVaultPackage {
+  vaultIndex: any | null;
+  treeItems: Array<{ path: string; mode: string; type: string; sha: string }>;
+  screenshotBlobsByPath: Map<string, string>;
+  screenshotBlobsById: Map<string, string>;
+}
+
+// --- Fetch Complete Remote Vault Package (Index, Tree, Screenshots) ---
+async function fetchRemoteVaultPackage(config: GitHubConfig): Promise<RemoteVaultPackage | null> {
+  const repoPath = `${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`;
+
+  // 1. Get branch head commit
+  const { sha: branchSha, isEmpty } = await getBranchHeadCommit(config.token, repoPath, config.branch);
+  if (isEmpty || !branchSha) {
+    return null;
+  }
+
+  let treeItems: Array<{ path: string; mode: string; type: string; sha: string }> = [];
   try {
-    const { sha: branchSha } = await getBranchHeadCommit(config.token, repoPath, config.branch);
-    if (branchSha) {
-      const commitRes = await githubRequest(config.token, `/repos/${repoPath}/git/commits/${branchSha}`);
-      if (commitRes.ok) {
-        const commitData = await commitRes.json();
-        const treeSha = commitData.tree?.sha;
-        if (treeSha) {
-          const treeRes = await githubRequest(
-            config.token,
-            `/repos/${repoPath}/git/trees/${treeSha}?recursive=1`
-          );
-          if (treeRes.ok) {
-            const treeData = await treeRes.json();
-            const bookmarkNodes = (treeData.tree || []).filter(
-              (item: any) =>
-                item.path?.startsWith("bookmarks/") && item.path?.endsWith(".json") && item.type === "blob"
-            );
-
-            if (bookmarkNodes.length > 0) {
-              const restoredBookmarks: EnhancedBookmark[] = [];
-              const restoredMetadata: Record<string, BookmarkMetadata> = {};
-
-              await runWithConcurrency(bookmarkNodes, 6, async (node: any) => {
-                try {
-                  const bRes = await githubRequest(config.token, `/repos/${repoPath}/git/blobs/${node.sha}`);
-                  if (bRes.ok) {
-                    const blobData = await bRes.json();
-                    const text = safeB64Decode(blobData.content);
-                    const bm = JSON.parse(text);
-                    restoredBookmarks.push(bm);
-                    if (bm.id) {
-                      restoredMetadata[bm.id] = {
-                        tags: bm.tags,
-                        description: bm.description,
-                        notes: bm.notes,
-                        isFavorite: bm.isFavorite,
-                        httpStatus: bm.httpStatus,
-                        httpStatusText: bm.httpStatusText,
-                        finalUrl: bm.finalUrl,
-                      };
-                    }
-                  }
-                } catch {}
-              });
-
-              if (restoredBookmarks.length > 0) {
-                return {
-                  version: "2.1.0",
-                  syncedAt: new Date().toISOString(),
-                  bookmarkCount: restoredBookmarks.length,
-                  bookmarks: restoredBookmarks,
-                  metadata: restoredMetadata,
-                };
-              }
-            }
-          }
+    const commitRes = await githubRequest(config.token, `/repos/${repoPath}/git/commits/${branchSha}`);
+    if (commitRes.ok) {
+      const commitData = await commitRes.json();
+      const treeSha = commitData.tree?.sha;
+      if (treeSha && isValidGitSha(treeSha)) {
+        const treeRes = await githubRequest(
+          config.token,
+          `/repos/${repoPath}/git/trees/${treeSha}?recursive=1`
+        );
+        if (treeRes.ok) {
+          const treeData = await treeRes.json();
+          treeItems = treeData.tree || [];
         }
       }
     }
   } catch (err) {
-    console.warn("Tree reconstruction fallback error:", err);
+    console.warn("Could not fetch remote Git tree:", err);
   }
 
-  return null;
+  const screenshotBlobsByPath = new Map<string, string>();
+  const screenshotBlobsById = new Map<string, string>();
+
+  for (const item of treeItems) {
+    if (item.type === "blob" && isValidGitSha(item.sha)) {
+      const cleanPath = cleanGitPath(item.path);
+      if (cleanPath.startsWith("assets/screenshots/")) {
+        screenshotBlobsByPath.set(cleanPath, item.sha);
+        const filename = cleanPath.split("/").pop() || "";
+        const idMatch = filename.replace(/\.webp$/i, "").match(/(?:_|^)([0-9a-zA-Z_-]+)$/);
+        if (idMatch && idMatch[1]) {
+          screenshotBlobsById.set(idMatch[1], item.sha);
+        }
+      }
+    }
+  }
+
+  // 2. Fetch Vault Index
+  let vaultIndex: any = null;
+
+  // A. Check for index in tree
+  const indexItem = treeItems.find(
+    (i) =>
+      i.type === "blob" &&
+      (i.path === ".noob31/vault-index.json" ||
+        i.path === "bookmarks-vault.json" ||
+        cleanGitPath(i.path) === ".noob31/vault-index.json")
+  );
+
+  if (indexItem && isValidGitSha(indexItem.sha)) {
+    try {
+      const blobRes = await githubRequest(config.token, `/repos/${repoPath}/git/blobs/${indexItem.sha}`);
+      if (blobRes.ok) {
+        const blobData = await blobRes.json();
+        if (blobData.content) {
+          const jsonText = safeB64Decode(blobData.content);
+          vaultIndex = JSON.parse(jsonText);
+        }
+      }
+    } catch (err) {
+      console.warn("Could not read vault index blob:", err);
+    }
+  }
+
+  // B. Contents API fallback
+  if (!vaultIndex) {
+    const targetPaths = [`.noob31/vault-index.json`, `bookmarks-vault.json`];
+    for (const filePath of targetPaths) {
+      try {
+        const res = await githubRequest(
+          config.token,
+          `/repos/${repoPath}/contents/${filePath}?ref=${encodeURIComponent(config.branch)}`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          if (data.content) {
+            const jsonStr = safeB64Decode(data.content);
+            vaultIndex = JSON.parse(jsonStr);
+            break;
+          } else if (data.download_url) {
+            const dlRes = await githubRequest(config.token, data.download_url);
+            if (dlRes.ok) {
+              vaultIndex = await dlRes.json();
+              break;
+            }
+          }
+        }
+      } catch {}
+    }
+  }
+
+  // C. Fallback: Reconstruct from individual bookmarks/*.json files
+  if (!vaultIndex && treeItems.length > 0) {
+    const bookmarkNodes = treeItems.filter(
+      (item) => item.path?.startsWith("bookmarks/") && item.path?.endsWith(".json") && item.type === "blob"
+    );
+
+    if (bookmarkNodes.length > 0) {
+      const restoredBookmarks: EnhancedBookmark[] = [];
+      const restoredMetadata: Record<string, BookmarkMetadata> = {};
+
+      await runWithConcurrency(bookmarkNodes, 6, async (node) => {
+        try {
+          const bRes = await githubRequest(config.token, `/repos/${repoPath}/git/blobs/${node.sha}`);
+          if (bRes.ok) {
+            const blobData = await bRes.json();
+            const text = safeB64Decode(blobData.content);
+            const bm = JSON.parse(text);
+            restoredBookmarks.push(bm);
+            if (bm.id) {
+              restoredMetadata[bm.id] = {
+                tags: bm.tags,
+                description: bm.description,
+                notes: bm.notes,
+                isFavorite: bm.isFavorite,
+                httpStatus: bm.httpStatus,
+                httpStatusText: bm.httpStatusText,
+                finalUrl: bm.finalUrl,
+                favicon: bm.favicon,
+                ogImage: bm.ogImage,
+                screenshot: bm.screenshot,
+                githubSha: bm.githubSha,
+              };
+            }
+          }
+        } catch {}
+      });
+
+      if (restoredBookmarks.length > 0) {
+        vaultIndex = {
+          version: "2.1.0",
+          syncedAt: new Date().toISOString(),
+          bookmarkCount: restoredBookmarks.length,
+          bookmarks: restoredBookmarks,
+          metadata: restoredMetadata,
+        };
+      }
+    }
+  }
+
+  return {
+    vaultIndex,
+    treeItems,
+    screenshotBlobsByPath,
+    screenshotBlobsById,
+  };
 }
 
 function normalizeBookmarkUrl(url: string): string {
@@ -973,7 +1103,7 @@ function normalizeBookmarkUrl(url: string): string {
   }
 }
 
-// --- Pull & Restore Bookmarks & Metadata from GitHub ---
+// --- Pull & Restore Bookmarks, Folders, Metadata & Screenshots from GitHub ---
 export async function pullVaultFromGitHub(
   rawConfig: GitHubConfig,
   options: { restoreBookmarks?: boolean } = { restoreBookmarks: true }
@@ -987,18 +1117,21 @@ export async function pullVaultFromGitHub(
     };
   }
 
+  const repoPath = `${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}`;
+  await saveGitHubConfig({ ...config, syncStatus: "syncing", lastSyncError: undefined });
+
   try {
-    const vault = await fetchRawVaultIndex(config);
-    if (!vault) {
-      return {
-        success: false,
-        message: `No vault records found in "${config.owner}/${config.repo}" on branch "${config.branch}".`,
-        count: 0,
-      };
+    const remoteData = await fetchRemoteVaultPackage(config);
+    if (!remoteData || !remoteData.vaultIndex) {
+      const msg = `No bookmark vault found in "${config.owner}/${config.repo}" on branch "${config.branch}".`;
+      await saveGitHubConfig({ ...config, syncStatus: "error", lastSyncError: msg });
+      return { success: false, message: msg, count: 0 };
     }
 
+    const { vaultIndex, screenshotBlobsByPath, screenshotBlobsById } = remoteData;
     const localTree = await getEnhancedBookmarkTree();
     const localBookmarks = extractAllBookmarks(localTree);
+    const localMetadata = await getAllMetadata();
 
     const urlToLocalBookmark = new Map<string, EnhancedBookmark>();
     for (const b of localBookmarks) {
@@ -1007,34 +1140,49 @@ export async function pullVaultFromGitHub(
       }
     }
 
-    const remoteBookmarks: EnhancedBookmark[] =
-      vault.bookmarks || (vault.tree ? extractAllBookmarks(vault.tree) : []);
-    const remoteMetadata: Record<string, BookmarkMetadata> = vault.metadata || {};
+    const remoteBookmarks: any[] =
+      vaultIndex.bookmarks || (vaultIndex.tree ? extractAllBookmarks(vaultIndex.tree) : []);
+    const remoteMetadata: Record<string, BookmarkMetadata> = vaultIndex.metadata || {};
+    const remoteFolderMap: Record<string, string> = vaultIndex.folderMap || {};
 
     let createdCount = 0;
     let updatedCount = 0;
+    let downloadedImagesCount = 0;
     const metadataUpdates: Record<string, Partial<BookmarkMetadata>> = {};
+    const imageDownloadTasks: Array<{ targetId: string; blobSha: string }> = [];
+
+    // 1. Reconcile Bookmarks (Restore missing to Chrome + map to local target)
+    const reconciledItems: Array<{ targetId: string; remoteBm: any; remoteMeta: BookmarkMetadata }> = [];
 
     for (const rb of remoteBookmarks) {
       if (!rb.url) continue;
       const normalizedUrl = normalizeBookmarkUrl(rb.url);
       let targetLocal = urlToLocalBookmark.get(normalizedUrl);
+      const remoteMeta = remoteMetadata[rb.id] || {};
 
-      // Recreate bookmark in Chrome if missing
+      // Restore bookmark into Chrome with proper folder structure if missing
       if (!targetLocal && options.restoreBookmarks) {
         try {
+          const folderPath =
+            rb.folderPath ||
+            (rb.parentId && remoteFolderMap[rb.parentId]) ||
+            "Bookmarks Bar";
+
+          const parentId = await ensureChromeFolderPath(folderPath);
+
           const created = await createBookmark({
-            parentId: "1", // Bookmarks Bar
+            parentId,
             title: rb.title || rb.url,
             url: rb.url,
-            tags: rb.tags || [],
-            description: rb.description || "",
-            notes: rb.notes || "",
-            isFavorite: rb.isFavorite || false,
-            favicon: rb.favicon,
-            screenshot: rb.screenshot,
-            ogImage: rb.ogImage,
+            tags: rb.tags || remoteMeta.tags || [],
+            description: rb.description || remoteMeta.description || "",
+            notes: rb.notes || remoteMeta.notes || "",
+            isFavorite: rb.isFavorite || remoteMeta.isFavorite || false,
+            favicon: rb.favicon || remoteMeta.favicon,
+            ogImage: rb.ogImage || remoteMeta.ogImage,
+            readerContent: rb.readerContent || remoteMeta.readerContent,
           });
+
           targetLocal = created;
           urlToLocalBookmark.set(normalizedUrl, created);
           createdCount++;
@@ -1044,55 +1192,158 @@ export async function pullVaultFromGitHub(
       }
 
       if (targetLocal) {
-        const existingMeta = remoteMetadata[rb.id] || {};
-        metadataUpdates[targetLocal.id] = {
-          tags: Array.from(
-            new Set([...(targetLocal.tags || []), ...(rb.tags || []), ...(existingMeta.tags || [])])
-          ),
-          description: rb.description || existingMeta.description || targetLocal.description,
-          notes: rb.notes || existingMeta.notes || targetLocal.notes,
-          isFavorite: rb.isFavorite ?? existingMeta.isFavorite ?? targetLocal.isFavorite,
-          screenshot: rb.screenshot || existingMeta.screenshot || targetLocal.screenshot,
-          ogImage: rb.ogImage || existingMeta.ogImage || targetLocal.ogImage,
-          favicon: rb.favicon || existingMeta.favicon || targetLocal.favicon,
-          httpStatus: rb.httpStatus || existingMeta.httpStatus || targetLocal.httpStatus,
-          httpStatusText: rb.httpStatusText || existingMeta.httpStatusText || targetLocal.httpStatusText,
-          finalUrl: rb.finalUrl || existingMeta.finalUrl || targetLocal.finalUrl,
-          lastChecked: rb.lastChecked || existingMeta.lastChecked || targetLocal.lastChecked,
-        };
-        updatedCount++;
+        reconciledItems.push({
+          targetId: targetLocal.id,
+          remoteBm: rb,
+          remoteMeta,
+        });
       }
     }
 
+    // 2. Identify and Download Screenshot Images
+    for (const item of reconciledItems) {
+      const { targetId, remoteBm, remoteMeta } = item;
+      const assetPath = cleanGitPath(remoteBm.screenshot || `assets/screenshots/${remoteBm.id}.webp`);
+
+      const targetBlobSha =
+        (isValidGitSha(remoteBm.githubSha) ? remoteBm.githubSha : undefined) ||
+        (isValidGitSha(remoteMeta.githubSha) ? remoteMeta.githubSha : undefined) ||
+        screenshotBlobsById.get(remoteBm.id) ||
+        screenshotBlobsByPath.get(assetPath);
+
+      const existingLocal = localMetadata[targetId] || {};
+
+      if (targetBlobSha && isValidGitSha(targetBlobSha)) {
+        // Check if we already have this exact screenshot locally
+        const hasMatchingLocalImage =
+          existingLocal.screenshot &&
+          existingLocal.screenshot.startsWith("data:image/") &&
+          existingLocal.githubSha === targetBlobSha;
+
+        if (!hasMatchingLocalImage) {
+          imageDownloadTasks.push({
+            targetId,
+            blobSha: targetBlobSha,
+          });
+        }
+      }
+    }
+
+    const downloadedImages = new Map<string, { dataUrl: string; sha: string }>();
+
+    if (imageDownloadTasks.length > 0) {
+      await runWithConcurrency(imageDownloadTasks, 6, async (task) => {
+        try {
+          const res = await githubRequest(config.token, `/repos/${repoPath}/git/blobs/${task.blobSha}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.content) {
+              const cleanBase64 = data.content.replace(/\s/g, "");
+              const dataUrl = `data:image/webp;base64,${cleanBase64}`;
+              downloadedImages.set(task.targetId, {
+                dataUrl,
+                sha: task.blobSha,
+              });
+              downloadedImagesCount++;
+            }
+          }
+        } catch (imgErr) {
+          console.warn(`Could not download image blob for bookmark ${task.targetId}:`, imgErr);
+        }
+      });
+    }
+
+    // 3. Merge All Metadata Fields (Tags, Notes, Diagnostics, Stars, Screenshots)
+    for (const item of reconciledItems) {
+      const { targetId, remoteBm, remoteMeta } = item;
+      const existingLocal = localMetadata[targetId] || {};
+      const downloaded = downloadedImages.get(targetId);
+
+      const mergedTags = Array.from(
+        new Set([
+          ...(existingLocal.tags || []),
+          ...(remoteBm.tags || []),
+          ...(remoteMeta.tags || []),
+        ])
+      ).filter(Boolean);
+
+      const finalScreenshot =
+        downloaded?.dataUrl ||
+        (existingLocal.screenshot && existingLocal.screenshot.startsWith("data:image/")
+          ? existingLocal.screenshot
+          : undefined);
+
+      const finalSha =
+        downloaded?.sha ||
+        (isValidGitSha(remoteBm.githubSha) ? remoteBm.githubSha : undefined) ||
+        (isValidGitSha(remoteMeta.githubSha) ? remoteMeta.githubSha : undefined) ||
+        (isValidGitSha(existingLocal.githubSha) ? existingLocal.githubSha : undefined);
+
+      metadataUpdates[targetId] = {
+        ...existingLocal,
+        tags: mergedTags,
+        description: remoteBm.description || remoteMeta.description || existingLocal.description,
+        notes: remoteBm.notes || remoteMeta.notes || existingLocal.notes,
+        isFavorite: remoteBm.isFavorite ?? remoteMeta.isFavorite ?? existingLocal.isFavorite,
+        favicon: remoteBm.favicon || remoteMeta.favicon || existingLocal.favicon,
+        ogImage: remoteBm.ogImage || remoteMeta.ogImage || existingLocal.ogImage,
+        readerContent: remoteBm.readerContent || remoteMeta.readerContent || existingLocal.readerContent,
+        httpStatus: remoteBm.httpStatus || remoteMeta.httpStatus || existingLocal.httpStatus,
+        httpStatusText: remoteBm.httpStatusText || remoteMeta.httpStatusText || existingLocal.httpStatusText,
+        finalUrl: remoteBm.finalUrl || remoteMeta.finalUrl || existingLocal.finalUrl,
+        lastChecked: remoteBm.lastChecked || remoteMeta.lastChecked || existingLocal.lastChecked,
+        screenshot: finalScreenshot,
+        githubSha: finalSha,
+        lastCaptured: finalScreenshot ? (existingLocal.lastCaptured || Date.now()) : undefined,
+      };
+
+      updatedCount++;
+    }
+
+    // Preserve any metadata entries for non-matching local bookmarks
     for (const [metaId, meta] of Object.entries(remoteMetadata)) {
-      if (!metadataUpdates[metaId]) {
+      if (!metadataUpdates[metaId] && !localMetadata[metaId]) {
         metadataUpdates[metaId] = meta;
       }
     }
 
+    // 4. Batch Atomic Storage Update
     if (Object.keys(metadataUpdates).length > 0) {
       await bulkUpdateMetadata(metadataUpdates);
     }
 
-    const totalProcessed = createdCount + updatedCount;
-    let summaryMsg = `Successfully synced vault from GitHub!`;
-    if (createdCount > 0 && updatedCount > 0) {
-      summaryMsg = `Restored ${createdCount} missing bookmarks and updated metadata for ${updatedCount} existing bookmarks!`;
-    } else if (createdCount > 0) {
-      summaryMsg = `Restored ${createdCount} bookmarks from GitHub!`;
-    } else if (updatedCount > 0) {
-      summaryMsg = `Synchronized metadata for ${updatedCount} bookmarks from GitHub!`;
-    }
+    const timestamp = Date.now();
+    await saveGitHubConfig({
+      ...config,
+      syncStatus: "success",
+      lastSyncTime: timestamp,
+      lastSyncError: undefined,
+    });
+
+    const parts: string[] = [];
+    if (createdCount > 0) parts.push(`restored ${createdCount} bookmarks`);
+    if (updatedCount > 0) parts.push(`synced metadata for ${updatedCount} items`);
+    if (downloadedImagesCount > 0) parts.push(`downloaded ${downloadedImagesCount} screenshots`);
+
+    const summaryMsg = parts.length > 0
+      ? `Vault successfully pulled from GitHub (${parts.join(", ")})!`
+      : `Vault is up to date with GitHub (${reconciledItems.length} bookmarks verified).`;
 
     return {
       success: true,
       message: summaryMsg,
-      count: totalProcessed,
+      count: createdCount + updatedCount,
     };
   } catch (err: any) {
+    const errorMsg = err.message || "Failed to restore from GitHub";
+    await saveGitHubConfig({
+      ...config,
+      syncStatus: "error",
+      lastSyncError: errorMsg,
+    });
     return {
       success: false,
-      message: `Failed to restore from GitHub: ${err.message || err}`,
+      message: errorMsg,
       count: 0,
     };
   }

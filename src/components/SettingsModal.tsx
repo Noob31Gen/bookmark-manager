@@ -172,11 +172,11 @@ export function SettingsModal({
       });
       return;
     }
-    if (!window.confirm("This will synchronize your vault with GitHub, restoring any missing bookmarks and updating metadata (tags, notes, descriptions, stars). Proceed?")) {
+    if (!window.confirm("This will synchronize your vault with GitHub, restoring missing bookmarks into their original folder structures, downloading screenshot assets, and updating metadata (tags, notes, diagnostics, stars). Proceed?")) {
       return;
     }
     setIsPulling(true);
-    setSyncFeedback("Downloading and restoring bookmarks vault from GitHub...");
+    setSyncFeedback("Downloading vault index, folder tree, and screenshot assets from GitHub...");
     setTestResult(null);
     try {
       await saveGitHubConfig(cleanConfig);
