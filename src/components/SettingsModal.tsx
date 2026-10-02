@@ -275,7 +275,7 @@ export function SettingsModal({
                     onChange={() => setPreferences({ ...preferences, fetchScope: "all" })}
                     className="accent-primary"
                   />
-                  <span className="text-xs font-bold">Full Capture</span>
+                  <span className="text-xs font-bold">Full Metadata</span>
                 </label>
 
                 <label
@@ -297,7 +297,7 @@ export function SettingsModal({
 
                 <label
                   className={`pop-3d p-2.5 border cursor-pointer flex items-center gap-2 transition-all ${
-                    preferences.fetchScope === "screenshots_only"
+                    preferences.fetchScope === "status_only" || preferences.fetchScope === "screenshots_only"
                       ? "bg-primary/10 border-primary text-foreground font-bold"
                       : "bg-card border-border text-muted-foreground hover:bg-muted"
                   }`}
@@ -305,11 +305,11 @@ export function SettingsModal({
                   <input
                     type="radio"
                     name="fetchScope"
-                    checked={preferences.fetchScope === "screenshots_only"}
-                    onChange={() => setPreferences({ ...preferences, fetchScope: "screenshots_only" })}
+                    checked={preferences.fetchScope === "status_only" || preferences.fetchScope === "screenshots_only"}
+                    onChange={() => setPreferences({ ...preferences, fetchScope: "status_only" })}
                     className="accent-primary"
                   />
-                  <span className="text-xs font-bold">Screenshots Only</span>
+                  <span className="text-xs font-bold">Status Only</span>
                 </label>
               </div>
             </div>

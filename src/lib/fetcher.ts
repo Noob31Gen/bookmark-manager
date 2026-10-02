@@ -266,8 +266,8 @@ export async function directFetchPageDetails(
       };
     }
 
-    // If screenshots_only, skip HTML body parsing
-    if (scope === "screenshots_only") {
+    // If status_only / probe only, skip HTML body parsing
+    if (scope === "status_only" || scope === "screenshots_only") {
       return {
         url,
         finalUrl,
@@ -488,7 +488,7 @@ export async function runBatchRefetch(
           updates.fetchedTitle = result.title;
         }
 
-        if (fetchScope !== "screenshots_only") {
+        if (fetchScope !== "status_only" && fetchScope !== "screenshots_only") {
           if (result.ogImage) updates.ogImage = result.ogImage;
           if (result.favicon) updates.favicon = result.favicon;
           if (result.description && !item.description) updates.description = result.description;

@@ -1,4 +1,4 @@
-export type FetchScope = "all" | "embeds_only" | "screenshots_only";
+export type FetchScope = "all" | "embeds_only" | "status_only" | "screenshots_only";
 export type ClickAction = "open_link" | "browse_mode";
 export type MainViewThumbnail = "auto" | "screenshot_only" | "embed_only" | "icon_only" | "none";
 
