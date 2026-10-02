@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Cloud, CloudOff, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Cloud, CloudOff, RefreshCw } from "lucide-react";
 import { Button } from "./ui/Button";
 import { GitHubConfig } from "../lib/types";
 import { syncVaultToGitHub } from "../lib/githubSync";
@@ -39,7 +39,7 @@ export function GitHubSyncStatus({
       setFeedback(err.message || "Sync failed");
     } finally {
       setIsSyncing(false);
-      setTimeout(() => setFeedback(null), 4000);
+      setTimeout(() => setFeedback(null), 3000);
     }
   };
 
@@ -58,38 +58,21 @@ export function GitHubSyncStatus({
     );
   }
 
-  return (
-    <div className="flex items-center gap-2">
-      <div
-        className="hidden md:flex flex-col text-right text-[11px] leading-tight cursor-pointer"
-        onClick={onOpenSettings}
-        title={`Repository: ${config.owner}/${config.repo}\nLast synced: ${config.lastSyncTime ? new Date(config.lastSyncTime).toLocaleString() : "Never"}`}
-      >
-        <span className="font-semibold text-foreground flex items-center gap-1 justify-end">
-          {config.lastSyncTime ? (
-            <span className="text-primary flex items-center gap-1">
-              <CheckCircle2 className="w-3 h-3" /> Vault Synced
-            </span>
-          ) : (
-            <span className="text-foreground flex items-center gap-1">
-              <Cloud className="w-3 h-3 text-primary" /> GitHub Vault
-            </span>
-          )}
-        </span>
-        <span className="text-muted-foreground">
-          {config.lastSyncTime ? formatTimeAgo(config.lastSyncTime) : "Ready to sync"}
-        </span>
-      </div>
+  const tooltipText = `Repository: ${config.owner}/${config.repo}\nLast synced: ${
+    config.lastSyncTime ? `${formatTimeAgo(config.lastSyncTime)} (${new Date(config.lastSyncTime).toLocaleString()})` : "Never"
+  }`;
 
+  return (
+    <div className="flex items-center gap-1.5">
       <Button
         variant="outline"
         size="sm"
         onClick={handleSyncNow}
         disabled={isSyncing}
         className="gap-1.5 font-bold"
-        title="Sync bookmarks & screenshots with GitHub"
+        title={tooltipText}
       >
-        <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin text-primary" : ""}`} />
+        <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin text-primary" : "text-primary"}`} />
         <span className="hidden sm:inline">
           {isSyncing ? "Syncing..." : "Sync Vault"}
         </span>
