@@ -552,6 +552,7 @@ export function ManagerApp() {
         {
           skipExisting: options.skipExisting,
           settleDelayMs: options.settleDelayMs,
+          autoUpdateChromeBookmarkTitles: preferences.autoUpdateChromeBookmarkTitles,
         },
         (prog) => setScreenshotProgress(prog),
         screenshotAbortControllerRef.current.signal
@@ -612,11 +613,12 @@ export function ManagerApp() {
 
   const handleCaptureScreenshot = async (bookmark: EnhancedBookmark) => {
     if (!bookmark.url) return;
-    const screenshot = await captureBookmarkUrlScreenshot(bookmark.url);
-    if (screenshot) {
-      await updateBookmark(bookmark.id, { screenshot });
-      refreshData();
-    }
+    await captureBookmarkUrlScreenshot(
+      bookmark.url,
+      bookmark.id,
+      preferences.autoUpdateChromeBookmarkTitles
+    );
+    refreshData();
   };
 
   const handleCreateFolder = async (e: React.FormEvent) => {

@@ -1,4 +1,4 @@
-import { ExtractedPageData, EnhancedBookmark, BatchFetchProgress } from "./types";
+import { ExtractedPageData, EnhancedBookmark, BookmarkMetadata, BatchFetchProgress } from "./types";
 import { normalizeTag } from "./utils";
 import { saveBookmarkMetadata } from "./metadataStore";
 
@@ -67,9 +67,140 @@ export async function captureActiveTabScreenshot(): Promise<string | undefined> 
   }
 }
 
-// Capture live screenshot for a specific bookmark URL
-// If the tab is already open, it captures that tab; otherwise it opens a tab, waits for load, takes snapshot, and restores focus
-export async function captureBookmarkUrlScreenshot(url: string): Promise<string | undefined> {
+// Extract live DOM metadata (title, description, ogImage, favicon, reader, tags, in-page images) from a rendered tab
+export async function extractTabDomMetadata(tabId: number): Promise<Partial<BookmarkMetadata>> {
+  if (!isChrome || !chrome.scripting?.executeScript || !tabId) {
+    return {};
+  }
+
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const getMeta = (names: string[]) => {
+          for (const name of names) {
+            const el = document.querySelector(
+              `meta[name='${name}'], meta[property='${name}'], meta[itemprop='${name}']`
+            );
+            if (el) {
+              const content = el.getAttribute("content");
+              if (content) return content.trim();
+            }
+          }
+          return "";
+        };
+
+        const title =
+          getMeta(["og:title", "twitter:title"]) ||
+          document.title ||
+          "";
+
+        const description =
+          getMeta(["description", "og:description", "twitter:description"]) ||
+          "";
+
+        let ogImage =
+          getMeta(["og:image", "twitter:image", "twitter:image:src"]) ||
+          "";
+
+        if (ogImage && !ogImage.startsWith("http") && !ogImage.startsWith("data:")) {
+          try {
+            ogImage = new URL(ogImage, window.location.href).href;
+          } catch {}
+        }
+
+        // Find high-res favicon from link tags
+        let favicon = "";
+        const iconLinks = Array.from(
+          document.querySelectorAll<HTMLLinkElement>(
+            "link[rel~='icon'], link[rel='apple-touch-icon'], link[rel='shortcut icon']"
+          )
+        );
+        for (const link of iconLinks) {
+          if (link.href && link.href.startsWith("http")) {
+            favicon = link.href;
+            break;
+          }
+        }
+
+        // Auto-generate suggested tags from meta keywords and headings
+        const keywordsMeta = getMeta(["keywords", "news_keywords"]);
+        const tags = new Set<string>();
+
+        if (keywordsMeta) {
+          keywordsMeta.split(",").forEach((k) => {
+            const cleaned = k.trim().toLowerCase();
+            if (cleaned.length > 1 && cleaned.length < 25) tags.add(cleaned);
+          });
+        }
+
+        const category = getMeta(["article:section", "category", "subject"]);
+        if (category) tags.add(category.toLowerCase());
+
+        // Extract reader text
+        let bodyText = "";
+        const article = document.querySelector("article") || document.querySelector("main");
+        if (article) {
+          bodyText = (article as HTMLElement).innerText.slice(0, 5000);
+        } else {
+          bodyText = document.body.innerText.slice(0, 3000);
+        }
+
+        // High-res in-page gallery images
+        const galleryImages: string[] = [];
+        const imgs = Array.from(document.querySelectorAll("img"));
+        for (const img of imgs) {
+          const src = img.currentSrc || img.src;
+          if (
+            src &&
+            src.startsWith("http") &&
+            !src.includes(".svg") &&
+            !src.includes("data:image") &&
+            img.naturalWidth > 150 &&
+            img.naturalHeight > 100
+          ) {
+            galleryImages.push(src);
+            if (galleryImages.length >= 6) break;
+          }
+        }
+
+        return {
+          title,
+          description,
+          ogImage: ogImage || undefined,
+          favicon: favicon || undefined,
+          suggestedTags: Array.from(tags).slice(0, 6),
+          readerText: bodyText.trim(),
+          fetchedImages: galleryImages,
+        };
+      },
+    });
+
+    if (results && results[0]?.result) {
+      const res = results[0].result;
+      const updates: Partial<BookmarkMetadata> = {};
+      if (res.title) updates.fetchedTitle = res.title;
+      if (res.description) updates.description = res.description;
+      if (res.ogImage) updates.ogImage = res.ogImage;
+      if (res.favicon) updates.favicon = res.favicon;
+      if (res.readerText) updates.readerContent = res.readerText;
+      if (res.suggestedTags && res.suggestedTags.length > 0) updates.tags = res.suggestedTags;
+      if (res.fetchedImages && res.fetchedImages.length > 0) updates.fetchedImages = res.fetchedImages;
+      return updates;
+    }
+  } catch (err) {
+    console.warn("Script extraction on tab failed:", err);
+  }
+
+  return {};
+}
+
+// Capture live screenshot and all assets (title, embeds, favicon, article) for a specific bookmark URL
+export async function captureBookmarkUrlScreenshot(
+  url: string,
+  bookmarkId?: string,
+  autoUpdateTitles?: boolean
+): Promise<string | undefined> {
   if (!isChrome || !chrome.tabs) return undefined;
   if (!url || !url.startsWith("http")) return undefined;
 
@@ -105,12 +236,35 @@ export async function captureBookmarkUrlScreenshot(url: string): Promise<string 
         });
       });
 
+      const extracted = await extractTabDomMetadata(existingTab.id);
+
       // Restore focus to original manager tab
       if (currentTab?.id) {
         chrome.tabs.update(currentTab.id, { active: true });
       }
 
-      return await compressImageDataUrl(rawDataUrl);
+      const compressed = await compressImageDataUrl(rawDataUrl);
+
+      if (bookmarkId) {
+        await saveBookmarkMetadata(bookmarkId, {
+          screenshot: compressed,
+          lastCaptured: Date.now(),
+          httpStatus: 200,
+          httpStatusText: "OK",
+          lastChecked: Date.now(),
+          ...extracted,
+        });
+
+        if (autoUpdateTitles && extracted.fetchedTitle && chrome.bookmarks?.update) {
+          try {
+            await new Promise<void>((resolve) => {
+              chrome.bookmarks.update(bookmarkId, { title: extracted.fetchedTitle! }, () => resolve());
+            });
+          } catch {}
+        }
+      }
+
+      return compressed;
     }
 
     // 2. Open a temporary background/visible tab to load the bookmark's actual page
@@ -141,6 +295,11 @@ export async function captureBookmarkUrlScreenshot(url: string): Promise<string 
           await new Promise((r) => setTimeout(r, 900));
 
           try {
+            const extracted = await extractTabDomMetadata(newTab.id!);
+            if (!extracted.favicon && newTab.favIconUrl) {
+              extracted.favicon = newTab.favIconUrl;
+            }
+
             chrome.tabs.captureVisibleTab(newTab.windowId, { format: "png" }, async (rawDataUrl) => {
               // Clean up: close temporary tab and refocus manager tab
               try {
@@ -150,6 +309,26 @@ export async function captureBookmarkUrlScreenshot(url: string): Promise<string 
 
               if (rawDataUrl) {
                 const compressed = await compressImageDataUrl(rawDataUrl);
+
+                if (bookmarkId) {
+                  await saveBookmarkMetadata(bookmarkId, {
+                    screenshot: compressed,
+                    lastCaptured: Date.now(),
+                    httpStatus: 200,
+                    httpStatusText: "OK",
+                    lastChecked: Date.now(),
+                    ...extracted,
+                  });
+
+                  if (autoUpdateTitles && extracted.fetchedTitle && chrome.bookmarks?.update) {
+                    try {
+                      await new Promise<void>((resolve) => {
+                        chrome.bookmarks.update(bookmarkId, { title: extracted.fetchedTitle! }, () => resolve());
+                      });
+                    } catch {}
+                  }
+                }
+
                 resolve(compressed);
               } else {
                 resolve(undefined);
@@ -307,6 +486,7 @@ export interface BatchScreenshotOptions {
   skipExisting?: boolean;
   settleDelayMs?: number;
   timeoutMs?: number;
+  autoUpdateChromeBookmarkTitles?: boolean;
 }
 
 // Sequential batch screenshot capture for multiple bookmarks by loading live tabs
@@ -411,7 +591,9 @@ export async function runBatchTabScreenshots(
         throw new Error("No tab id returned");
       }
 
-      // Wait for page load complete
+      // Wait for page load complete and capture both screenshot and live page metadata
+      let extractedMeta: Partial<BookmarkMetadata> = {};
+
       const rawDataUrl = await new Promise<string | undefined>((resolve) => {
         let isResolved = false;
 
@@ -454,6 +636,13 @@ export async function runBatchTabScreenshots(
             }
 
             try {
+              // 1. Extract live DOM metadata (title, embeds, favicon, reader, tags, gallery)
+              extractedMeta = await extractTabDomMetadata(tab.id!);
+              if (!extractedMeta.favicon && tab.favIconUrl) {
+                extractedMeta.favicon = tab.favIconUrl;
+              }
+
+              // 2. Capture viewport snapshot
               chrome.tabs.captureVisibleTab(tabWindowId as any, { format: "png" }, (dataUrl) => {
                 if (chrome.runtime.lastError || !dataUrl) {
                   resolve(undefined);
@@ -484,10 +673,35 @@ export async function runBatchTabScreenshots(
 
       if (rawDataUrl) {
         const compressed = await compressImageDataUrl(rawDataUrl);
-        await saveBookmarkMetadata(item.id, {
+        const updates: Partial<BookmarkMetadata> = {
           screenshot: compressed,
           lastCaptured: Date.now(),
-        });
+          httpStatus: 200,
+          httpStatusText: "OK",
+          lastChecked: Date.now(),
+          ...extractedMeta,
+        };
+
+        if (extractedMeta.tags && extractedMeta.tags.length > 0) {
+          updates.tags = Array.from(new Set([...(item.tags || []), ...extractedMeta.tags]));
+        }
+
+        await saveBookmarkMetadata(item.id, updates);
+
+        // Update native Chrome bookmark title if option enabled
+        if (
+          options.autoUpdateChromeBookmarkTitles &&
+          extractedMeta.fetchedTitle &&
+          typeof chrome !== "undefined" &&
+          chrome.bookmarks?.update
+        ) {
+          try {
+            await new Promise<void>((resolve) => {
+              chrome.bookmarks.update(item.id, { title: extractedMeta.fetchedTitle! }, () => resolve());
+            });
+          } catch {}
+        }
+
         capturedCount++;
       } else {
         failedCount++;
