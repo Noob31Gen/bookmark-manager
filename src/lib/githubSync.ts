@@ -86,12 +86,29 @@ export function safeB64Decode(str: string): string {
 export const utf8ToBase64 = safeB64Encode;
 export const base64ToUtf8 = safeB64Decode;
 
+export function isValidGitSha(sha?: string | null): boolean {
+  return typeof sha === "string" && /^[0-9a-f]{40}$/i.test(sha.trim());
+}
+
+// Strictly cleans path segments for Git Tree compatibility
 export function sanitizePathSegment(name: string): string {
   return (name || "untitled")
-    .replace(/[/\\?%*:|"<>]/g, "-")
-    .replace(/\s+/g, " ")
-    .replace(/^\.+|\.+$/g, "")
+    .replace(/[\x00-\x1F\x7F-\x9F]/g, "") // Strip all invisible control characters
+    .replace(/[/\\?%*:|"<>]/g, "-") // Replace forbidden path chars
+    .replace(/\s+/g, " ") // Collapse whitespace
+    .replace(/^\.+|\.+$/g, "") // Strip leading/trailing periods
+    .replace(/^ +| +$/g, "") // Strip leading/trailing spaces
     .trim() || "item";
+}
+
+export function cleanGitPath(path: string): string {
+  return path
+    .replace(/[\x00-\x1F\x7F-\x9F]/g, "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((seg) => sanitizePathSegment(seg))
+    .filter(Boolean)
+    .join("/");
 }
 
 // --- Base GitHub REST Request Helper ---
@@ -224,65 +241,49 @@ export function generateMarkdownReadme(
   return md;
 }
 
-// --- Commit a Single File with Automatic Conflict Resolution ---
-export async function commitFileContent(
+// --- Force Commit File via Contents API with Remote SHA Lookup ---
+export async function forceCommitFile(
   token: string,
   repo: string,
   branch: string,
   path: string,
   content: string,
-  sha: string | null = null,
   commitMessage: string = "update vault file via Noob31 Vault"
-): Promise<{ sha: string }> {
-  const payload: { message: string; content: string; branch: string; sha?: string } = {
+): Promise<{ sha: string; commitSha?: string }> {
+  let existingSha: string | undefined;
+  try {
+    const getRes = await githubRequest(token, `/repos/${repo}/contents/${path}?ref=${encodeURIComponent(branch)}`);
+    if (getRes.ok) {
+      const remoteData = await getRes.json();
+      existingSha = remoteData.sha;
+    }
+  } catch {}
+
+  const payload: any = {
     message: commitMessage,
     content: safeB64Encode(content),
     branch,
   };
-
-  if (sha) {
-    payload.sha = sha;
-  }
+  if (existingSha) payload.sha = existingSha;
 
   const res = await githubRequest(token, `/repos/${repo}/contents/${path}`, {
     method: "PUT",
     body: JSON.stringify(payload),
   });
 
-  // Handle conflict or branch creation on empty repo
-  if (res.status === 409 || res.status === 422) {
-    try {
-      const getRes = await githubRequest(token, `/repos/${repo}/contents/${path}?ref=${encodeURIComponent(branch)}`);
-      if (getRes.ok) {
-        const remoteData = await getRes.json();
-        const retryPayload = {
-          message: `${commitMessage} (conflict auto-resolution)`,
-          content: safeB64Encode(content),
-          branch,
-          sha: remoteData.sha,
-        };
-        const retryRes = await githubRequest(token, `/repos/${repo}/contents/${path}`, {
-          method: "PUT",
-          body: JSON.stringify(retryPayload),
-        });
-        if (retryRes.ok) {
-          const retryData = await retryRes.json();
-          return { sha: retryData.content.sha };
-        }
-      }
-    } catch (err) {
-      console.warn(`Conflict retry failed for ${path}:`, err);
-    }
-  }
-
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.message || `Failed to commit file ${path} (HTTP ${res.status})`);
+    throw new Error(err.message || `Failed to commit ${path} (HTTP ${res.status})`);
   }
 
   const data = await res.json();
-  return { sha: data.content?.sha || "" };
+  return {
+    sha: data.content?.sha || "",
+    commitSha: data.commit?.sha || "",
+  };
 }
+
+export const commitFileContent = forceCommitFile;
 
 // --- Create a Git Blob (for Binary Screenshots or Large Text) ---
 async function createGitBlob(
@@ -308,7 +309,7 @@ async function createGitBlob(
     });
     if (res.ok) {
       const data = await res.json();
-      return data.sha;
+      return isValidGitSha(data.sha) ? data.sha : null;
     }
   } catch (err: any) {
     console.warn("Failed to create blob:", err.message || err);
@@ -387,29 +388,8 @@ export async function syncVaultToGitHub(
     const folderTree = extractFolderTree(tree);
     const metadata = await getAllMetadata();
 
-    // 1. Check if repo is empty or if target branch ref exists
+    // 1. Check branch head commit SHA
     let { sha: parentCommitSha, isEmpty } = await getBranchHeadCommit(config.token, repoPath, config.branch);
-
-    // If repo is completely empty, initialize it with README
-    if (isEmpty || !parentCommitSha) {
-      try {
-        const initRes = await commitFileContent(
-          config.token,
-          repoPath,
-          config.branch,
-          "README.md",
-          "# 📑 Personal Bookmarks Vault\n\nInitialized by Noob31 Bookmark Vault.",
-          null,
-          "[Initial Commit] Initialize Bookmarks Vault"
-        );
-        if (initRes.sha) {
-          const recheck = await getBranchHeadCommit(config.token, repoPath, config.branch);
-          parentCommitSha = recheck.sha;
-        }
-      } catch (initErr) {
-        console.warn("Empty repo initialization fallback:", initErr);
-      }
-    }
 
     // 2. Map folder IDs to clean paths
     const folderMap: Record<string, string> = {};
@@ -424,14 +404,14 @@ export async function syncVaultToGitHub(
     buildFolderMap(folderTree);
 
     // 3. Inspect parent tree to preserve non-vault files (.github, LICENSE, .gitignore)
-    const preservedNonVaultItems: Array<{ path: string; mode: string; type: string; sha: string }> = [];
-    if (parentCommitSha) {
+    const preservedNonVaultItems: Array<{ path: string; mode: "100644"; type: "blob"; sha: string }> = [];
+    if (parentCommitSha && isValidGitSha(parentCommitSha)) {
       try {
         const commitRes = await githubRequest(config.token, `/repos/${repoPath}/git/commits/${parentCommitSha}`);
         if (commitRes.ok) {
           const commitData = await commitRes.json();
           const baseTreeSha = commitData.tree?.sha;
-          if (baseTreeSha) {
+          if (baseTreeSha && isValidGitSha(baseTreeSha)) {
             const treeRes = await githubRequest(
               config.token,
               `/repos/${repoPath}/git/trees/${baseTreeSha}?recursive=1`
@@ -441,6 +421,7 @@ export async function syncVaultToGitHub(
               for (const item of baseTreeData.tree || []) {
                 if (
                   item.type === "blob" &&
+                  isValidGitSha(item.sha) &&
                   !item.path.startsWith("bookmarks/") &&
                   !item.path.startsWith("assets/") &&
                   !item.path.startsWith(".noob31/") &&
@@ -448,8 +429,8 @@ export async function syncVaultToGitHub(
                   item.path !== "bookmarks-vault.json"
                 ) {
                   preservedNonVaultItems.push({
-                    path: item.path,
-                    mode: item.mode || "100644",
+                    path: cleanGitPath(item.path),
+                    mode: "100644",
                     type: "blob",
                     sha: item.sha,
                   });
@@ -506,8 +487,9 @@ export async function syncVaultToGitHub(
 
     for (const b of flatList) {
       const folderPath = folderMap[b.parentId || ""] || "Bookmarks Bar";
+      const cleanFolder = folderPath.split("/").map(sanitizePathSegment).filter(Boolean).join("/") || "Bookmarks Bar";
       const fileSlug = sanitizePathSegment(b.title || b.id).slice(0, 50);
-      const filePath = `bookmarks/${folderPath}/${fileSlug}_${b.id}.json`.replace(/\/+/g, "/");
+      const filePath = cleanGitPath(`bookmarks/${cleanFolder}/${fileSlug}_${b.id}.json`);
 
       const cleanBookmark = {
         id: b.id,
@@ -551,17 +533,19 @@ export async function syncVaultToGitHub(
     if (screenshotUploadTasks.length > 0) {
       await runWithConcurrency(screenshotUploadTasks, 5, async (task) => {
         try {
+          const validExistingSha = isValidGitSha(task.existingSha) ? task.existingSha : undefined;
           const blobSha =
-            task.existingSha ||
+            validExistingSha ||
             (await createGitBlob(config.token, repoPath, task.base64, "base64"));
-          if (blobSha) {
-            treeMap.set(`assets/screenshots/${task.id}.webp`, {
-              path: `assets/screenshots/${task.id}.webp`,
+          if (blobSha && isValidGitSha(blobSha)) {
+            const assetPath = cleanGitPath(`assets/screenshots/${task.id}.webp`);
+            treeMap.set(assetPath, {
+              path: assetPath,
               mode: "100644",
               type: "blob",
               sha: blobSha,
             });
-            if (!task.existingSha) {
+            if (!validExistingSha) {
               await saveBookmarkMetadata(task.id, { githubSha: blobSha });
             }
           }
@@ -587,41 +571,42 @@ export async function syncVaultToGitHub(
     });
 
     if (!createTreeRes.ok) {
-      // Fallback: commit main vault index via Contents API if trees API is restricted
-      const fallbackCommit = await commitFileContent(
+      const errData = await createTreeRes.json().catch(() => ({}));
+      const detailedMsg = errData.message || (errData.errors ? JSON.stringify(errData.errors) : `HTTP ${createTreeRes.status}`);
+      console.warn(`Git Tree API failed (${createTreeRes.status}): ${detailedMsg}, falling back to Contents API...`);
+
+      // Robust fallback: commit main vault index & README directly via Contents API
+      const fallbackCommit = await forceCommitFile(
         config.token,
         repoPath,
         config.branch,
         ".noob31/vault-index.json",
         JSON.stringify(vaultIndex, null, 2),
-        null,
         `[Vault Sync] Synchronized ${flatList.length} bookmarks`
       );
-      if (fallbackCommit.sha) {
-        await commitFileContent(
-          config.token,
-          repoPath,
-          config.branch,
-          "README.md",
-          readmeContent,
-          null,
-          `[Vault Sync] Update Catalog README`
-        );
-        const timestamp = Date.now();
-        await saveGitHubConfig({
-          ...config,
-          syncStatus: "success",
-          lastSyncTime: timestamp,
-          lastSyncError: undefined,
-        });
-        return {
-          success: true,
-          message: `Synchronized ${flatList.length} bookmarks to ${config.owner}/${config.repo}!`,
-          timestamp,
-        };
-      }
-      const err = await createTreeRes.json().catch(() => ({}));
-      throw new Error(`Tree creation failed: ${err.message || createTreeRes.status}`);
+
+      await forceCommitFile(
+        config.token,
+        repoPath,
+        config.branch,
+        "README.md",
+        readmeContent,
+        `[Vault Sync] Update Catalog README`
+      );
+
+      const timestamp = Date.now();
+      await saveGitHubConfig({
+        ...config,
+        syncStatus: "success",
+        lastSyncTime: timestamp,
+        lastSyncError: undefined,
+      });
+
+      return {
+        success: true,
+        message: `Pushed ${flatList.length} bookmarks to ${config.owner}/${config.repo}!`,
+        timestamp,
+      };
     }
 
     const treeData = await createTreeRes.json();
@@ -631,8 +616,12 @@ export async function syncVaultToGitHub(
     const commitPayload: any = {
       message: `[Vault Sync] Synchronized ${flatList.length} bookmarks across ${Object.keys(folderMap).length} folders (${new Date().toLocaleDateString()})`,
       tree: newTreeSha,
-      parents: parentCommitSha ? [parentCommitSha] : [],
     };
+    if (isValidGitSha(parentCommitSha)) {
+      commitPayload.parents = [parentCommitSha];
+    } else {
+      commitPayload.parents = [];
+    }
 
     const createCommitRes = await githubRequest(config.token, `/repos/${repoPath}/git/commits`, {
       method: "POST",
@@ -640,38 +629,36 @@ export async function syncVaultToGitHub(
     });
 
     if (!createCommitRes.ok) {
-      const err = await createCommitRes.json().catch(() => ({}));
-      throw new Error(`Commit creation failed: ${err.message || createCommitRes.status}`);
+      const errData = await createCommitRes.json().catch(() => ({}));
+      throw new Error(`Commit creation failed (${createCommitRes.status}): ${errData.message || createCommitRes.statusText}`);
     }
     const commitData = await createCommitRes.json();
     const newCommitSha = commitData.sha;
 
-    // 7. Update Branch Ref (with automatic creation fallback)
+    // 7. Update Branch Ref
+    const targetBranch = config.branch || "main";
     let updateRefRes = await githubRequest(
       config.token,
-      `/repos/${repoPath}/git/refs/heads/${encodeURIComponent(config.branch)}`,
+      `/repos/${repoPath}/git/refs/heads/${encodeURIComponent(targetBranch)}`,
       {
         method: "PATCH",
         body: JSON.stringify({ sha: newCommitSha, force: true }),
       }
     );
 
-    if (!updateRefRes.ok && updateRefRes.status === 404) {
+    if (updateRefRes.status === 404) {
       const createRefRes = await githubRequest(config.token, `/repos/${repoPath}/git/refs`, {
         method: "POST",
-        body: JSON.stringify({ ref: `refs/heads/${config.branch}`, sha: newCommitSha }),
+        body: JSON.stringify({ ref: `refs/heads/${targetBranch}`, sha: newCommitSha }),
       });
 
       if (!createRefRes.ok) {
-        updateRefRes = await githubRequest(
-          config.token,
-          `/repos/${repoPath}/git/refs/heads/${encodeURIComponent(config.branch)}`,
-          {
-            method: "PATCH",
-            body: JSON.stringify({ sha: newCommitSha, force: true }),
-          }
-        );
+        const errData = await createRefRes.json().catch(() => ({}));
+        throw new Error(`Failed to create branch "${targetBranch}" (${createRefRes.status}): ${errData.message || createRefRes.statusText}`);
       }
+    } else if (!updateRefRes.ok) {
+      const errData = await updateRefRes.json().catch(() => ({}));
+      throw new Error(`Failed to update branch "${targetBranch}" (${updateRefRes.status}): ${errData.message || updateRefRes.statusText}`);
     }
 
     const timestamp = Date.now();
@@ -815,6 +802,20 @@ async function fetchRawVaultIndex(config: GitHubConfig): Promise<any | null> {
   return null;
 }
 
+function normalizeBookmarkUrl(url: string): string {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url.trim());
+    let path = parsed.pathname;
+    if (path.length > 1 && path.endsWith("/")) {
+      path = path.slice(0, -1);
+    }
+    return `${parsed.protocol}//${parsed.host.toLowerCase()}${path}${parsed.search}${parsed.hash}`;
+  } catch {
+    return url.trim().replace(/\/+$/, "").toLowerCase();
+  }
+}
+
 // --- Pull & Restore Bookmarks & Metadata from GitHub ---
 export async function pullVaultFromGitHub(
   rawConfig: GitHubConfig,
@@ -845,7 +846,7 @@ export async function pullVaultFromGitHub(
     const urlToLocalBookmark = new Map<string, EnhancedBookmark>();
     for (const b of localBookmarks) {
       if (b.url) {
-        urlToLocalBookmark.set(b.url.trim().toLowerCase(), b);
+        urlToLocalBookmark.set(normalizeBookmarkUrl(b.url), b);
       }
     }
 
@@ -859,7 +860,7 @@ export async function pullVaultFromGitHub(
 
     for (const rb of remoteBookmarks) {
       if (!rb.url) continue;
-      const normalizedUrl = rb.url.trim().toLowerCase();
+      const normalizedUrl = normalizeBookmarkUrl(rb.url);
       let targetLocal = urlToLocalBookmark.get(normalizedUrl);
 
       // Recreate bookmark in Chrome if missing
