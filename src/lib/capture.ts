@@ -1,5 +1,6 @@
-import { ExtractedPageData } from "./types";
+import { ExtractedPageData, EnhancedBookmark, BatchFetchProgress } from "./types";
 import { normalizeTag } from "./utils";
+import { saveBookmarkMetadata } from "./metadataStore";
 
 const isChrome = typeof chrome !== "undefined" && !!chrome.tabs;
 
@@ -300,4 +301,243 @@ export async function extractActiveTabDetails(): Promise<ExtractedPageData | nul
     console.error("Failed to extract tab details", err);
     return null;
   }
+}
+
+export interface BatchScreenshotOptions {
+  skipExisting?: boolean;
+  settleDelayMs?: number;
+  timeoutMs?: number;
+}
+
+// Sequential batch screenshot capture for multiple bookmarks by loading live tabs
+export async function runBatchTabScreenshots(
+  bookmarks: EnhancedBookmark[],
+  options: BatchScreenshotOptions = {},
+  onProgress: (progress: BatchFetchProgress) => void,
+  abortSignal?: AbortSignal
+): Promise<{ total: number; captured: number; skipped: number; failed: number; aborted: boolean }> {
+  const { skipExisting = true, settleDelayMs = 1200, timeoutMs = 15000 } = options;
+
+  let current = 0;
+  let capturedCount = 0;
+  let failedCount = 0;
+  let skippedCount = 0;
+  const total = bookmarks.length;
+
+  const updateUI = (title = "", url = "") => {
+    if (abortSignal?.aborted) return;
+    onProgress({
+      isRunning: true,
+      total,
+      current,
+      currentTitle: title,
+      currentUrl: url,
+      successCount: capturedCount,
+      errorCount: failedCount,
+      skippedCount,
+    });
+  };
+
+  updateUI("Initializing batch tab capture...", "");
+
+  if (!isChrome || !chrome.tabs) {
+    onProgress({
+      isRunning: false,
+      total,
+      current: 0,
+      currentTitle: "Chrome Tabs API not available",
+      currentUrl: "",
+      successCount: 0,
+      errorCount: 0,
+      skippedCount: total,
+    });
+    return { total, captured: 0, skipped: total, failed: 0, aborted: false };
+  }
+
+  // Get manager tab and window to restore focus reliably
+  let managerTabId: number | undefined;
+  let managerWindowId: number | undefined;
+  try {
+    const [activeTab] = await new Promise<chrome.tabs.Tab[]>((resolve) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => resolve(tabs || []));
+    });
+    managerTabId = activeTab?.id;
+    managerWindowId = activeTab?.windowId;
+  } catch {}
+
+  const queue: EnhancedBookmark[] = [];
+  for (const b of bookmarks) {
+    if (!b.url || !b.url.startsWith("http")) {
+      skippedCount++;
+      current++;
+      continue;
+    }
+    if (skipExisting && b.screenshot) {
+      skippedCount++;
+      current++;
+      continue;
+    }
+    queue.push(b);
+  }
+
+  updateUI();
+
+  for (const item of queue) {
+    if (abortSignal?.aborted) break;
+
+    updateUI(item.title || "Loading webpage...", item.url || "");
+
+    let temporaryTabId: number | undefined;
+
+    try {
+      // Create new tab in foreground to ensure browser paints pixels for captureVisibleTab
+      const tab = await new Promise<chrome.tabs.Tab>((resolve, reject) => {
+        chrome.tabs.create(
+          { url: item.url, active: true, windowId: managerWindowId },
+          (t) => {
+            if (chrome.runtime.lastError || !t) {
+              reject(chrome.runtime.lastError || new Error("Failed to create tab"));
+            } else {
+              resolve(t);
+            }
+          }
+        );
+      });
+
+      temporaryTabId = tab.id;
+      const tabWindowId = tab.windowId || managerWindowId;
+
+      if (!tab.id) {
+        throw new Error("No tab id returned");
+      }
+
+      // Wait for page load complete
+      const rawDataUrl = await new Promise<string | undefined>((resolve) => {
+        let isResolved = false;
+
+        const cleanup = () => {
+          if (isResolved) return;
+          isResolved = true;
+          chrome.tabs.onUpdated.removeListener(onUpdatedListener);
+          if (abortSignal) abortSignal.removeEventListener("abort", onAbortListener);
+          clearTimeout(timerId);
+        };
+
+        const onAbortListener = () => {
+          cleanup();
+          resolve(undefined);
+        };
+
+        const timerId = setTimeout(() => {
+          cleanup();
+          resolve(undefined);
+        }, timeoutMs);
+
+        if (abortSignal) {
+          abortSignal.addEventListener("abort", onAbortListener, { once: true });
+        }
+
+        const onUpdatedListener = async (updatedTabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+          if (updatedTabId === tab.id && changeInfo.status === "complete") {
+            cleanup();
+            if (abortSignal?.aborted) {
+              resolve(undefined);
+              return;
+            }
+
+            // Wait for fonts & layout animations to settle
+            await new Promise((r) => setTimeout(r, settleDelayMs));
+
+            if (abortSignal?.aborted) {
+              resolve(undefined);
+              return;
+            }
+
+            try {
+              chrome.tabs.captureVisibleTab(tabWindowId as any, { format: "png" }, (dataUrl) => {
+                if (chrome.runtime.lastError || !dataUrl) {
+                  resolve(undefined);
+                } else {
+                  resolve(dataUrl);
+                }
+              });
+            } catch {
+              resolve(undefined);
+            }
+          }
+        };
+
+        chrome.tabs.onUpdated.addListener(onUpdatedListener);
+      });
+
+      // Close the temporary tab as soon as snapshot is taken
+      if (temporaryTabId) {
+        try {
+          await new Promise<void>((resolve) => {
+            chrome.tabs.remove(temporaryTabId!, () => resolve());
+          });
+          temporaryTabId = undefined;
+        } catch {}
+      }
+
+      if (abortSignal?.aborted) break;
+
+      if (rawDataUrl) {
+        const compressed = await compressImageDataUrl(rawDataUrl);
+        await saveBookmarkMetadata(item.id, {
+          screenshot: compressed,
+          lastCaptured: Date.now(),
+        });
+        capturedCount++;
+      } else {
+        failedCount++;
+      }
+      current++;
+    } catch (err: any) {
+      if (temporaryTabId) {
+        try {
+          chrome.tabs.remove(temporaryTabId);
+        } catch {}
+      }
+      if (abortSignal?.aborted || err.name === "AbortError") {
+        break;
+      }
+      failedCount++;
+      current++;
+    } finally {
+      if (!abortSignal?.aborted) {
+        updateUI(item.title, item.url);
+      }
+    }
+  }
+
+  // Ensure manager tab is reactivated
+  if (managerTabId) {
+    try {
+      await new Promise<void>((resolve) => {
+        chrome.tabs.update(managerTabId!, { active: true }, () => resolve());
+      });
+    } catch {}
+  }
+
+  const wasAborted = !!abortSignal?.aborted;
+
+  onProgress({
+    isRunning: false,
+    total,
+    current,
+    currentTitle: wasAborted ? "Stopped" : "Completed",
+    currentUrl: "",
+    successCount: capturedCount,
+    errorCount: failedCount,
+    skippedCount,
+  });
+
+  return {
+    total,
+    captured: capturedCount,
+    skipped: skippedCount,
+    failed: failedCount,
+    aborted: wasAborted,
+  };
 }

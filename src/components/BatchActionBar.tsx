@@ -8,6 +8,7 @@ import {
   CheckSquare,
   Square,
   Layers,
+  Camera,
 } from "lucide-react";
 import { FolderNode } from "../lib/types";
 import { Button } from "./ui/Button";
@@ -22,6 +23,7 @@ interface BatchActionBarProps {
   onClearSelection: () => void;
   onDeleteSelected: () => void;
   onRefetchSelected: () => void;
+  onCaptureSelectedScreenshots?: () => void;
   onMoveSelected: (destinationFolderId: string) => void;
   onCopySelected: (destinationFolderId: string) => void;
   folders: FolderNode[];
@@ -36,6 +38,7 @@ export function BatchActionBar({
   onClearSelection,
   onDeleteSelected,
   onRefetchSelected,
+  onCaptureSelectedScreenshots,
   onMoveSelected,
   onCopySelected,
   folders,
@@ -120,6 +123,19 @@ export function BatchActionBar({
             >
               <RefreshCw className="w-3.5 h-3.5 text-primary" />
               <span>Refetch</span>
+            </Button>
+          )}
+
+          {selectedBookmarkCount > 0 && onCaptureSelectedScreenshots && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onCaptureSelectedScreenshots}
+              className="gap-1.5 text-xs font-bold uppercase"
+              title="Open temporary tabs and capture snapshots for selected bookmarks"
+            >
+              <Camera className="w-3.5 h-3.5 text-primary" />
+              <span>Snapshots</span>
             </Button>
           )}
 

@@ -64,7 +64,7 @@ export function Header({
         </div>
 
         {/* Right Action Tools Strip (Clean single-row, no awkward wrap breaking) */}
-        <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0 overflow-x-auto py-0.5">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0 overflow-x-auto no-scrollbar py-0.5">
           {/* Sort By Dropdown */}
           <div className="flex items-center border border-border bg-muted/40 px-2 py-1 gap-1 text-xs flex-shrink-0">
             <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />

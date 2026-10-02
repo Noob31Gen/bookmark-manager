@@ -17,6 +17,7 @@ import {
   MousePointerClick,
   Layout,
   Type,
+  Camera,
 } from "lucide-react";
 import { GitHubConfig, UserPreferences, FetchScope, ClickAction, MainViewThumbnail } from "../lib/types";
 import { testGitHubConnection, syncVaultToGitHub, pullVaultFromGitHub } from "../lib/githubSync";
@@ -42,6 +43,7 @@ interface SettingsModalProps {
   config: GitHubConfig;
   onConfigUpdated: () => void;
   totalBookmarks: number;
+  onLaunchBatchScreenshots?: (options: { skipExisting: boolean; settleDelayMs: number }) => void;
 }
 
 export function SettingsModal({
@@ -50,6 +52,7 @@ export function SettingsModal({
   config,
   onConfigUpdated,
   totalBookmarks,
+  onLaunchBatchScreenshots,
 }: SettingsModalProps) {
   const [formData, setFormData] = useState<GitHubConfig>(config);
   const [preferences, setPreferences] = useState<UserPreferences>({
@@ -63,6 +66,9 @@ export function SettingsModal({
     viewMode: "cards",
     concurrencyLimit: 4,
   });
+
+  const [skipExistingScreenshots, setSkipExistingScreenshots] = useState(true);
+  const [screenshotSettleDelay, setScreenshotSettleDelay] = useState(1200);
 
   const [showToken, setShowToken] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -212,9 +218,6 @@ export function SettingsModal({
                 <option value="browse_mode">Open Browse Mode (Expanded Inspector)</option>
                 <option value="open_link">Open Link Directly in New Tab</option>
               </select>
-              <p className="text-[10px] text-muted-foreground mt-1">
-                Browse Mode displays full screenshots, OG images, in-page image gallery, and redirect destination.
-              </p>
             </div>
 
             {/* Main View Thumbnail Display Setting */}
@@ -238,9 +241,6 @@ export function SettingsModal({
                 <option value="icon_only">Favicon / Site Logo Only</option>
                 <option value="none">None (Minimalist No-Banner Cards)</option>
               </select>
-              <p className="text-[10px] text-muted-foreground mt-1">
-                Controls what image type is prioritized in the main bookmark card view.
-              </p>
             </div>
           </div>
         </section>
@@ -262,75 +262,60 @@ export function SettingsModal({
               </label>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <label
-                  className={`pop-3d p-2.5 border cursor-pointer flex flex-col gap-1 transition-all ${
+                  className={`pop-3d p-2.5 border cursor-pointer flex items-center gap-2 transition-all ${
                     preferences.fetchScope === "all"
                       ? "bg-primary/10 border-primary text-foreground font-bold"
                       : "bg-card border-border text-muted-foreground hover:bg-muted"
                   }`}
                 >
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="radio"
-                      name="fetchScope"
-                      checked={preferences.fetchScope === "all"}
-                      onChange={() => setPreferences({ ...preferences, fetchScope: "all" })}
-                      className="accent-primary"
-                    />
-                    <span className="text-xs font-bold">Full Capture</span>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground">
-                    Icons, OG Embeds & Page Snapshots
-                  </span>
+                  <input
+                    type="radio"
+                    name="fetchScope"
+                    checked={preferences.fetchScope === "all"}
+                    onChange={() => setPreferences({ ...preferences, fetchScope: "all" })}
+                    className="accent-primary"
+                  />
+                  <span className="text-xs font-bold">Full Capture</span>
                 </label>
 
                 <label
-                  className={`pop-3d p-2.5 border cursor-pointer flex flex-col gap-1 transition-all ${
+                  className={`pop-3d p-2.5 border cursor-pointer flex items-center gap-2 transition-all ${
                     preferences.fetchScope === "embeds_only"
                       ? "bg-primary/10 border-primary text-foreground font-bold"
                       : "bg-card border-border text-muted-foreground hover:bg-muted"
                   }`}
                 >
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="radio"
-                      name="fetchScope"
-                      checked={preferences.fetchScope === "embeds_only"}
-                      onChange={() => setPreferences({ ...preferences, fetchScope: "embeds_only" })}
-                      className="accent-primary"
-                    />
-                    <span className="text-xs font-bold">Icons & Embeds</span>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground">
-                    Favicons, OG Image & Meta Tags
-                  </span>
+                  <input
+                    type="radio"
+                    name="fetchScope"
+                    checked={preferences.fetchScope === "embeds_only"}
+                    onChange={() => setPreferences({ ...preferences, fetchScope: "embeds_only" })}
+                    className="accent-primary"
+                  />
+                  <span className="text-xs font-bold">Icons & Embeds</span>
                 </label>
 
                 <label
-                  className={`pop-3d p-2.5 border cursor-pointer flex flex-col gap-1 transition-all ${
+                  className={`pop-3d p-2.5 border cursor-pointer flex items-center gap-2 transition-all ${
                     preferences.fetchScope === "screenshots_only"
                       ? "bg-primary/10 border-primary text-foreground font-bold"
                       : "bg-card border-border text-muted-foreground hover:bg-muted"
                   }`}
                 >
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="radio"
-                      name="fetchScope"
-                      checked={preferences.fetchScope === "screenshots_only"}
-                      onChange={() => setPreferences({ ...preferences, fetchScope: "screenshots_only" })}
-                      className="accent-primary"
-                    />
-                    <span className="text-xs font-bold">Screenshots Only</span>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground">
-                    Visual Tab Screenshots Only
-                  </span>
+                  <input
+                    type="radio"
+                    name="fetchScope"
+                    checked={preferences.fetchScope === "screenshots_only"}
+                    onChange={() => setPreferences({ ...preferences, fetchScope: "screenshots_only" })}
+                    className="accent-primary"
+                  />
+                  <span className="text-xs font-bold">Screenshots Only</span>
                 </label>
               </div>
             </div>
 
             {/* Smart Refetch Rule: Errors Only */}
-            <div className="p-3 bg-muted/40 border border-border flex items-start gap-3">
+            <div className="p-3 bg-muted/40 border border-border flex items-center gap-3">
               <input
                 type="checkbox"
                 id="refetch-errors-only-toggle"
@@ -338,21 +323,16 @@ export function SettingsModal({
                 onChange={(e) =>
                   setPreferences({ ...preferences, refetchErrorsOnly: e.target.checked })
                 }
-                className="size-4 mt-0.5 accent-primary cursor-pointer flex-shrink-0"
+                className="size-4 accent-primary cursor-pointer flex-shrink-0"
               />
-              <label htmlFor="refetch-errors-only-toggle" className="text-xs cursor-pointer select-none">
-                <span className="font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                  <ShieldAlert className="w-3.5 h-3.5 text-red-500" />
-                  Only refetch bookmarks with errors (4xx / 5xx / Broken)
-                </span>
-                <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
-                  When clicking "Refetch All", only re-query bookmarks that currently have HTTP errors (such as 404, 500, or network timeouts). All healthy and unchecked bookmarks will be skipped.
-                </p>
+              <label htmlFor="refetch-errors-only-toggle" className="text-xs cursor-pointer select-none font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                <ShieldAlert className="w-3.5 h-3.5 text-red-500" />
+                Only refetch bookmarks with errors (4xx / 5xx / Broken)
               </label>
             </div>
 
             {/* Smart Refetch Rule: Skip 200 */}
-            <div className="p-3 bg-muted/40 border border-border flex items-start gap-3">
+            <div className="p-3 bg-muted/40 border border-border flex items-center gap-3">
               <input
                 type="checkbox"
                 id="skip-200-toggle"
@@ -360,22 +340,17 @@ export function SettingsModal({
                 onChange={(e) =>
                   setPreferences({ ...preferences, skip200OnRefetch: e.target.checked })
                 }
-                className="size-4 mt-0.5 accent-primary cursor-pointer flex-shrink-0"
+                className="size-4 accent-primary cursor-pointer flex-shrink-0"
               />
-              <label htmlFor="skip-200-toggle" className="text-xs cursor-pointer select-none">
-                <span className="font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                  <ShieldCheck className="w-3.5 h-3.5 text-green-500" />
-                  Disable refetch for all bookmarks with HTTP code 200
-                </span>
-                <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
-                  When clicking "Refetch All", healthy bookmarks with code 200 and existing icons will be skipped. Only broken (404/500) or unchecked bookmarks will be refreshed.
-                </p>
+              <label htmlFor="skip-200-toggle" className="text-xs cursor-pointer select-none font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-green-500" />
+                Disable refetch for all bookmarks with HTTP code 200
               </label>
             </div>
 
             {/* Auto-Update Chrome Bookmark Titles Rule & Instant Sync Action */}
             <div className="p-3 bg-muted/40 border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-start gap-3 flex-1 min-w-0">
+              <div className="flex items-center gap-3 flex-1 min-w-0">
                 <input
                   type="checkbox"
                   id="auto-update-titles-toggle"
@@ -386,16 +361,11 @@ export function SettingsModal({
                       autoUpdateChromeBookmarkTitles: e.target.checked,
                     })
                   }
-                  className="size-4 mt-0.5 accent-primary cursor-pointer flex-shrink-0"
+                  className="size-4 accent-primary cursor-pointer flex-shrink-0"
                 />
-                <label htmlFor="auto-update-titles-toggle" className="text-xs cursor-pointer select-none">
-                  <span className="font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                    <Type className="w-3.5 h-3.5 text-primary" />
-                    Update Chrome bookmarks with fetched webpage titles
-                  </span>
-                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
-                    When fetching or refetching, automatically update native Chrome bookmark titles with the live title parsed from the page.
-                  </p>
+                <label htmlFor="auto-update-titles-toggle" className="text-xs cursor-pointer select-none font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                  <Type className="w-3.5 h-3.5 text-primary" />
+                  Update Chrome bookmarks with fetched webpage titles
                 </label>
               </div>
 
@@ -410,6 +380,72 @@ export function SettingsModal({
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isSyncingTitles ? "animate-spin text-primary" : ""}`} />
                 <span>{isSyncingTitles ? "Syncing Titles..." : "Sync Titles Now"}</span>
+              </Button>
+            </div>
+          </div>
+        </section>
+
+        {/* Automated Tab Screenshot Runner Section */}
+        <section className="space-y-4">
+          <div className="border-b border-border pb-2 flex items-center justify-between">
+            <h3 className="text-sm font-extrabold uppercase tracking-wider text-foreground flex items-center gap-2">
+              <Camera className="w-4 h-4 text-primary" /> Automated Tab Screenshot Generator
+            </h3>
+            <span className="text-[11px] font-mono text-muted-foreground font-bold">Live Tab Snapshots</span>
+          </div>
+
+          <div className="p-4 bg-muted/30 border border-border space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Skip Existing Toggle */}
+              <div className="flex items-center gap-2.5">
+                <input
+                  type="checkbox"
+                  id="skip-existing-screenshots"
+                  checked={skipExistingScreenshots}
+                  onChange={(e) => setSkipExistingScreenshots(e.target.checked)}
+                  className="size-4 accent-primary cursor-pointer flex-shrink-0"
+                />
+                <label htmlFor="skip-existing-screenshots" className="text-xs cursor-pointer select-none font-bold uppercase tracking-wider text-foreground">
+                  Skip bookmarks with existing screenshots
+                </label>
+              </div>
+
+              {/* Settle Delay Dropdown */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1">
+                  Page Render Settle Delay
+                </label>
+                <select
+                  value={screenshotSettleDelay}
+                  onChange={(e) => setScreenshotSettleDelay(Number(e.target.value))}
+                  className="w-full bg-background border border-input px-3 py-1.5 text-xs text-foreground font-bold uppercase outline-none focus:border-primary cursor-pointer"
+                >
+                  <option value={900}>0.9s (Fast / Static Pages)</option>
+                  <option value={1400}>1.4s (Standard / Web Apps)</option>
+                  <option value={2500}>2.5s (Thorough / Heavy SPAs)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-t border-border/60">
+              <span className="text-[11px] text-muted-foreground font-mono">
+                Target: {totalBookmarks} Bookmarks in Vault
+              </span>
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                onClick={() => {
+                  onClose();
+                  onLaunchBatchScreenshots?.({
+                    skipExisting: skipExistingScreenshots,
+                    settleDelayMs: screenshotSettleDelay,
+                  });
+                }}
+                className="gap-2 font-black text-xs uppercase"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                <span>Launch Batch Tab Capture</span>
               </Button>
             </div>
           </div>
@@ -614,11 +650,10 @@ export function SettingsModal({
               variant="outline"
               size="sm"
               onClick={handleExportJSON}
-              className="flex-col h-auto py-3 gap-1 text-center"
+              className="py-3 font-bold text-xs gap-1.5 justify-center flex items-center"
             >
               <Download className="w-4 h-4 text-primary" />
-              <span className="font-bold text-xs">Export JSON Vault</span>
-              <span className="text-[10px] text-muted-foreground font-normal">Full backup with tags</span>
+              <span>Export JSON Vault</span>
             </Button>
 
             <Button
@@ -626,17 +661,15 @@ export function SettingsModal({
               variant="outline"
               size="sm"
               onClick={handleExportHTML}
-              className="flex-col h-auto py-3 gap-1 text-center"
+              className="py-3 font-bold text-xs gap-1.5 justify-center flex items-center"
             >
               <Download className="w-4 h-4 text-primary" />
-              <span className="font-bold text-xs">Export HTML Bookmarks</span>
-              <span className="text-[10px] text-muted-foreground font-normal">Netscape standard</span>
+              <span>Export HTML Bookmarks</span>
             </Button>
 
-            <label className="pop-3d border border-border bg-background hover:bg-muted p-3 flex flex-col items-center justify-center gap-1 cursor-pointer text-center">
+            <label className="pop-3d border border-border bg-background hover:bg-muted py-3 px-2 flex items-center justify-center gap-1.5 cursor-pointer text-center font-bold text-xs text-foreground">
               <Upload className="w-4 h-4 text-primary" />
-              <span className="font-bold text-xs text-foreground">Import JSON Vault</span>
-              <span className="text-[10px] text-muted-foreground">Restore from file</span>
+              <span>Import JSON Vault</span>
               <input
                 type="file"
                 accept=".json"

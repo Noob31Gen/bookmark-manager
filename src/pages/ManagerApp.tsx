@@ -45,7 +45,12 @@ import {
   getUserPreferences,
   DEFAULT_USER_PREFERENCES,
 } from "../lib/metadataStore";
-import { captureActiveTabScreenshot, captureBookmarkUrlScreenshot } from "../lib/capture";
+import {
+  captureActiveTabScreenshot,
+  captureBookmarkUrlScreenshot,
+  runBatchTabScreenshots,
+  BatchScreenshotOptions,
+} from "../lib/capture";
 import { runBatchRefetch, fetchLivePageDetails } from "../lib/fetcher";
 import { getDomain } from "../lib/utils";
 import { Header } from "../components/layout/Header";
@@ -57,6 +62,7 @@ import { BrowseModeModal } from "../components/BrowseModeModal";
 import { SettingsModal } from "../components/SettingsModal";
 import { BatchActionBar } from "../components/BatchActionBar";
 import { RefetchProgressModal } from "../components/RefetchProgressModal";
+import { ScreenshotProgressModal } from "../components/ScreenshotProgressModal";
 import { Input } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
 import { Modal } from "../components/ui/Modal";
@@ -97,6 +103,20 @@ export function ManagerApp() {
     skippedCount: 0,
   });
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Batch tab screenshots state
+  const [screenshotModalOpen, setScreenshotModalOpen] = useState(false);
+  const [screenshotProgress, setScreenshotProgress] = useState<BatchFetchProgress>({
+    isRunning: false,
+    total: 0,
+    current: 0,
+    currentTitle: "",
+    currentUrl: "",
+    successCount: 0,
+    errorCount: 0,
+    skippedCount: 0,
+  });
+  const screenshotAbortControllerRef = useRef<AbortController | null>(null);
 
   // Modals state
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -502,6 +522,81 @@ export function ManagerApp() {
     refreshData();
   };
 
+  // Batch tab screenshots execution
+  const executeBatchScreenshots = async (
+    targets: EnhancedBookmark[],
+    options: { skipExisting: boolean; settleDelayMs: number }
+  ) => {
+    if (targets.length === 0) return;
+
+    if (screenshotAbortControllerRef.current) {
+      screenshotAbortControllerRef.current.abort();
+    }
+    screenshotAbortControllerRef.current = new AbortController();
+
+    setScreenshotProgress({
+      isRunning: true,
+      total: targets.length,
+      current: 0,
+      currentTitle: "Initializing batch tab capture...",
+      currentUrl: "",
+      successCount: 0,
+      errorCount: 0,
+      skippedCount: 0,
+    });
+    setScreenshotModalOpen(true);
+
+    try {
+      await runBatchTabScreenshots(
+        targets,
+        {
+          skipExisting: options.skipExisting,
+          settleDelayMs: options.settleDelayMs,
+        },
+        (prog) => setScreenshotProgress(prog),
+        screenshotAbortControllerRef.current.signal
+      );
+    } catch (err) {
+      console.error("Batch screenshot error", err);
+    } finally {
+      screenshotAbortControllerRef.current = null;
+      refreshData();
+    }
+  };
+
+  const handleStartBatchScreenshotsFromSettings = (options: {
+    skipExisting: boolean;
+    settleDelayMs: number;
+  }) => {
+    executeBatchScreenshots(allBookmarks, options);
+  };
+
+  const handleCaptureSelectedScreenshots = () => {
+    const selected = allBookmarks.filter((b) => selectedBookmarkIds.has(b.id));
+    if (selected.length > 0) {
+      executeBatchScreenshots(selected, { skipExisting: false, settleDelayMs: 1200 });
+    }
+  };
+
+  const handleCancelBatchScreenshots = () => {
+    if (screenshotAbortControllerRef.current) {
+      screenshotAbortControllerRef.current.abort();
+      screenshotAbortControllerRef.current = null;
+    }
+    setScreenshotProgress({
+      isRunning: false,
+      total: 0,
+      current: 0,
+      currentTitle: "Stopped",
+      currentUrl: "",
+      successCount: 0,
+      errorCount: 0,
+      skippedCount: 0,
+    });
+    setScreenshotModalOpen(false);
+    refreshData();
+  };
+
   // Individual bookmark actions
   const handleToggleFavorite = async (id: string, isFavorite: boolean) => {
     await updateBookmark(id, { isFavorite });
@@ -796,6 +891,7 @@ export function ManagerApp() {
         onClearSelection={handleClearSelection}
         onDeleteSelected={handleDeleteSelected}
         onRefetchSelected={handleRefetchSelected}
+        onCaptureSelectedScreenshots={handleCaptureSelectedScreenshots}
         onMoveSelected={handleMoveSelected}
         onCopySelected={handleCopySelected}
         folders={folders}
@@ -807,6 +903,14 @@ export function ManagerApp() {
         onClose={() => setRefetchModalOpen(false)}
         progress={refetchProgress}
         onCancel={handleCancelRefetch}
+      />
+
+      {/* Batch Screenshot Progress Modal */}
+      <ScreenshotProgressModal
+        isOpen={screenshotModalOpen}
+        onClose={() => setScreenshotModalOpen(false)}
+        progress={screenshotProgress}
+        onCancel={handleCancelBatchScreenshots}
       />
 
       {/* Edit Bookmark Modal */}
@@ -854,6 +958,7 @@ export function ManagerApp() {
         config={gitHubConfig}
         onConfigUpdated={refreshData}
         totalBookmarks={allBookmarks.length}
+        onLaunchBatchScreenshots={handleStartBatchScreenshotsFromSettings}
       />
 
       {/* New Folder Modal */}

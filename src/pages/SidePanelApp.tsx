@@ -260,7 +260,7 @@ export function SidePanelApp() {
         />
 
         {/* Filters Strip */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 text-xs">
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 text-xs">
           <button
             onClick={() => {
               setFilterStarredOnly(!filterStarredOnly);
