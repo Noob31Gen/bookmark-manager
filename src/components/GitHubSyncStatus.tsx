@@ -20,7 +20,7 @@ export function GitHubSyncStatus({
   const [feedback, setFeedback] = useState<string | null>(null);
 
   const handleSyncNow = async () => {
-    if (!config.enabled || !config.token) {
+    if (!config.token?.trim() || !config.owner?.trim() || !config.repo?.trim()) {
       onOpenSettings();
       return;
     }
@@ -43,7 +43,7 @@ export function GitHubSyncStatus({
     }
   };
 
-  if (!config.enabled || !config.token) {
+  if (!config.token?.trim() || !config.owner?.trim() || !config.repo?.trim()) {
     return (
       <Button
         variant="outline"
@@ -66,31 +66,31 @@ export function GitHubSyncStatus({
         title={`Repository: ${config.owner}/${config.repo}\nLast synced: ${config.lastSyncTime ? new Date(config.lastSyncTime).toLocaleString() : "Never"}`}
       >
         <span className="font-semibold text-foreground flex items-center gap-1 justify-end">
-          {config.syncStatus === "error" ? (
-            <span className="text-destructive flex items-center gap-1">
-              <AlertTriangle className="w-3 h-3" /> Sync Failed
-            </span>
-          ) : (
+          {config.lastSyncTime ? (
             <span className="text-primary flex items-center gap-1">
               <CheckCircle2 className="w-3 h-3" /> Vault Synced
+            </span>
+          ) : (
+            <span className="text-foreground flex items-center gap-1">
+              <Cloud className="w-3 h-3 text-primary" /> GitHub Vault
             </span>
           )}
         </span>
         <span className="text-muted-foreground">
-          {config.lastSyncTime ? formatTimeAgo(config.lastSyncTime) : "Not yet synced"}
+          {config.lastSyncTime ? formatTimeAgo(config.lastSyncTime) : "Ready to sync"}
         </span>
       </div>
 
       <Button
-        variant={config.syncStatus === "error" ? "destructive" : "outline"}
+        variant="outline"
         size="sm"
         onClick={handleSyncNow}
         disabled={isSyncing}
-        className="gap-1.5"
+        className="gap-1.5 font-bold"
         title="Sync bookmarks & screenshots with GitHub"
       >
         <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin text-primary" : ""}`} />
-        <span className="hidden sm:inline font-bold">
+        <span className="hidden sm:inline">
           {isSyncing ? "Syncing..." : "Sync Vault"}
         </span>
       </Button>

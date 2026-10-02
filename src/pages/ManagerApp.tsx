@@ -14,6 +14,8 @@ import {
   ShieldAlert,
   ArrowUpRight,
   HelpCircle,
+  Settings,
+  Star,
 } from "lucide-react";
 import {
   EnhancedBookmark,
@@ -119,6 +121,7 @@ export function ManagerApp() {
   const screenshotAbortControllerRef = useRef<AbortController | null>(null);
 
   // Modals state
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingBookmark, setEditingBookmark] = useState<EnhancedBookmark | null>(null);
   const [browseModalOpen, setBrowseModalOpen] = useState(false);
@@ -656,26 +659,26 @@ export function ManagerApp() {
       />
 
       {/* Hero Banner */}
-      <div className="border-b border-border bg-card/60 py-6 px-4 md:px-6">
-        <div className="max-w-[1600px] mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl md:text-4xl font-black uppercase tracking-tight">
+      <div className="border-b border-border bg-card/60 py-3 sm:py-5 px-3 sm:px-6 w-full">
+        <div className="max-w-[1600px] w-full mx-auto flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
+          <div className="min-w-0">
+            <h1 className="text-lg sm:text-2xl md:text-3xl font-black uppercase tracking-tight">
               Personal <span className="marker-slanted">Bookmarks</span> Vault
             </h1>
-            <p className="text-xs md:text-sm text-muted-foreground mt-0.5">
-              Synchronized with native Chrome bookmarks & backed up to GitHub Cloud storage.
+            <p className="text-[11px] sm:text-xs md:text-sm text-muted-foreground mt-0.5">
+              Synchronized with native Chrome bookmarks & backed up to GitHub.
             </p>
           </div>
 
           {/* Quick Search Bar (Title, Domain, HTTP code, Tags, Notes) */}
-          <div className="w-full md:w-96 relative">
+          <div className="w-full sm:w-72 md:w-80 lg:w-96 relative min-w-0">
             <Input
               id="global-search-input"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search title, domain, http code (404/200), tags (/)..."
               icon={<Search className="w-4 h-4 text-muted-foreground" />}
-              className="py-2 bg-background shadow-xs text-xs md:text-sm"
+              className="py-1.5 sm:py-2 bg-background shadow-xs text-xs md:text-sm w-full"
             />
             {searchQuery && (
               <button
@@ -690,29 +693,31 @@ export function ManagerApp() {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 max-w-[1600px] w-full mx-auto p-4 md:p-6 flex flex-col md:flex-row gap-6">
-        {/* Left Sidebar */}
-        <Sidebar
-          folders={folders}
-          selectedFolderId={selectedFolderId}
-          onSelectFolder={setSelectedFolderId}
-          selectedFolderIds={selectedFolderIds}
-          onToggleFolderSelect={handleToggleSelectFolder}
-          selectedTag={selectedTag}
-          onSelectTag={setSelectedTag}
-          allTags={allTags}
-          selectedDomain={selectedDomain}
-          onSelectDomain={setSelectedDomain}
-          allDomains={allDomains}
-          httpCodeFilter={httpCodeFilter}
-          onSelectHttpCodeFilter={setHttpCodeFilter}
-          activeFilter={activeFilter}
-          onSelectFilter={setActiveFilter}
-          totalBookmarksCount={allBookmarks.length}
-          starredCount={starredCount}
-          snapshotCount={snapshotCount}
-          statusCounts={statusCounts}
-        />
+      <div className="flex-1 max-w-[1600px] w-full mx-auto p-3 sm:p-4 md:p-6 pb-24 md:pb-6 flex flex-col md:flex-row gap-4 sm:gap-6 min-w-0">
+        {/* Desktop Left Sidebar (Hidden on mobile < md) */}
+        <div className="hidden md:block">
+          <Sidebar
+            folders={folders}
+            selectedFolderId={selectedFolderId}
+            onSelectFolder={setSelectedFolderId}
+            selectedFolderIds={selectedFolderIds}
+            onToggleFolderSelect={handleToggleSelectFolder}
+            selectedTag={selectedTag}
+            onSelectTag={setSelectedTag}
+            allTags={allTags}
+            selectedDomain={selectedDomain}
+            onSelectDomain={setSelectedDomain}
+            allDomains={allDomains}
+            httpCodeFilter={httpCodeFilter}
+            onSelectHttpCodeFilter={setHttpCodeFilter}
+            activeFilter={activeFilter}
+            onSelectFilter={setActiveFilter}
+            totalBookmarksCount={allBookmarks.length}
+            starredCount={starredCount}
+            snapshotCount={snapshotCount}
+            statusCounts={statusCounts}
+          />
+        </div>
 
         {/* Bookmarks Display Area */}
         <main className="flex-1 min-w-0">
@@ -995,6 +1000,127 @@ export function ManagerApp() {
           </div>
         </form>
       </Modal>
+
+      {/* Mobile Filter & Folders Drawer Modal */}
+      <Modal
+        isOpen={mobileDrawerOpen}
+        onClose={() => setMobileDrawerOpen(false)}
+        title="Folders & Filters"
+        subtitle={`${filteredBookmarks.length} of ${allBookmarks.length} bookmarks matching`}
+        maxWidth="max-w-lg"
+      >
+        <div className="space-y-4">
+          <Sidebar
+            folders={folders}
+            selectedFolderId={selectedFolderId}
+            onSelectFolder={setSelectedFolderId}
+            selectedFolderIds={selectedFolderIds}
+            onToggleFolderSelect={handleToggleSelectFolder}
+            selectedTag={selectedTag}
+            onSelectTag={setSelectedTag}
+            allTags={allTags}
+            selectedDomain={selectedDomain}
+            onSelectDomain={setSelectedDomain}
+            allDomains={allDomains}
+            httpCodeFilter={httpCodeFilter}
+            onSelectHttpCodeFilter={setHttpCodeFilter}
+            activeFilter={activeFilter}
+            onSelectFilter={setActiveFilter}
+            totalBookmarksCount={allBookmarks.length}
+            starredCount={starredCount}
+            snapshotCount={snapshotCount}
+            statusCounts={statusCounts}
+          />
+          <div className="sticky bottom-0 bg-card pt-3 border-t border-border flex gap-2">
+            <Button
+              variant="default"
+              className="w-full font-bold uppercase tracking-wider text-xs"
+              onClick={() => setMobileDrawerOpen(false)}
+            >
+              Show ({filteredBookmarks.length}) Bookmarks
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Mobile Bottom Navigation Bar (Hidden on desktop md+) */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-card/95 backdrop-blur-md border-t-2 border-border px-2 py-1.5 flex items-center justify-around shadow-2xl safe-area-bottom select-none">
+        {/* Vault / All */}
+        <button
+          onClick={() => {
+            setSelectedFolderId(null);
+            setSelectedTag(null);
+            setSelectedDomain(null);
+            setHttpCodeFilter(null);
+            setActiveFilter("all");
+            setSearchQuery("");
+          }}
+          className={`flex flex-col items-center justify-center py-1 px-2 text-[10px] font-bold uppercase transition-colors cursor-pointer ${
+            activeFilter === "all" && !selectedFolderId && !selectedTag && !selectedDomain && !httpCodeFilter && !searchQuery
+              ? "text-primary"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Sparkles className="w-5 h-5 mb-0.5" />
+          <span>Vault</span>
+        </button>
+
+        {/* Starred */}
+        <button
+          onClick={() => {
+            setActiveFilter(activeFilter === "starred" ? "all" : "starred");
+            setSelectedFolderId(null);
+            setSelectedTag(null);
+          }}
+          className={`flex flex-col items-center justify-center py-1 px-2 text-[10px] font-bold uppercase transition-colors cursor-pointer ${
+            activeFilter === "starred"
+              ? "text-primary"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Star className={`w-5 h-5 mb-0.5 ${activeFilter === "starred" ? "text-amber-400 fill-amber-400" : ""}`} />
+          <span>Starred</span>
+        </button>
+
+        {/* Center Quick Add Button */}
+        <button
+          onClick={() => {
+            setEditingBookmark(null);
+            setEditModalOpen(true);
+          }}
+          className="flex flex-col items-center justify-center px-3.5 py-1.5 -mt-3.5 bg-primary text-primary-foreground border-2 border-border shadow-md active:translate-y-0.5 cursor-pointer"
+          title="Add New Bookmark"
+        >
+          <Plus className="w-5 h-5" />
+          <span className="text-[9px] font-black uppercase tracking-wider">Add</span>
+        </button>
+
+        {/* Filters & Folders Drawer Button */}
+        <button
+          onClick={() => setMobileDrawerOpen(true)}
+          className={`relative flex flex-col items-center justify-center py-1 px-2 text-[10px] font-bold uppercase transition-colors cursor-pointer ${
+            selectedFolderId || selectedTag || selectedDomain || httpCodeFilter
+              ? "text-primary"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Folder className="w-5 h-5 mb-0.5" />
+          <span>Filters</span>
+          {(selectedFolderId || selectedTag || selectedDomain || httpCodeFilter) && (
+            <span className="absolute top-1 right-2 w-2 h-2 bg-primary rounded-full ring-2 ring-card" />
+          )}
+        </button>
+
+        {/* Settings Button */}
+        <button
+          onClick={() => setSettingsModalOpen(true)}
+          className="flex flex-col items-center justify-center py-1 px-2 text-[10px] font-bold uppercase text-muted-foreground hover:text-foreground cursor-pointer"
+        >
+          <Settings className="w-5 h-5 mb-0.5" />
+          <span>Settings</span>
+        </button>
+      </nav>
     </div>
   );
 }
+

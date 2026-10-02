@@ -62,8 +62,9 @@ export function BatchActionBar({
 
   return (
     <>
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-card border-2 border-primary text-foreground shadow-2xl px-4 py-3 flex flex-wrap items-center gap-3 md:gap-4 max-w-4xl w-[95%] sm:w-auto animate-in fade-in slide-in-from-bottom-4 duration-200">
+      <div className="fixed bottom-16 sm:bottom-6 left-1/2 -translate-x-1/2 z-40 bg-card border-2 border-primary text-foreground shadow-2xl px-3 sm:px-4 py-2.5 sm:py-3 flex flex-wrap items-center gap-2 sm:gap-4 max-w-4xl w-[95%] sm:w-auto animate-in fade-in slide-in-from-bottom-4 duration-200">
         {/* Selection Status */}
+
         <div className="flex items-center gap-2 pr-2 border-r border-border">
           <button
             onClick={onToggleSelectAll}

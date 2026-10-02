@@ -33,21 +33,21 @@ export function Modal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-xs animate-in fade-in duration-200">
       <div
         className={cn(
-          "w-full bg-card border-2 border-border shadow-2xl flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200",
+          "w-full bg-card border-2 border-border shadow-2xl flex flex-col max-h-[94vh] sm:max-h-[90vh] animate-in zoom-in-95 duration-200",
           maxWidth
         )}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-border p-4 bg-muted/30">
-          <div>
-            <h2 className="text-lg font-bold uppercase tracking-wide text-foreground">
+        <div className="flex items-center justify-between border-b border-border p-3 sm:p-4 bg-muted/30">
+          <div className="min-w-0 flex-1 mr-2">
+            <h2 className="text-base sm:text-lg font-black uppercase tracking-wide text-foreground truncate">
               {title}
             </h2>
             {subtitle && (
-              <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
+              <p className="text-[11px] sm:text-xs text-muted-foreground mt-0.5 truncate">{subtitle}</p>
             )}
           </div>
           <Button
@@ -55,14 +55,16 @@ export function Modal({
             size="icon-sm"
             onClick={onClose}
             aria-label="Close modal"
+            className="flex-shrink-0"
           >
             <X className="w-4 h-4" />
           </Button>
         </div>
 
         {/* Body */}
-        <div className="p-6 overflow-y-auto flex-1">{children}</div>
+        <div className="p-3 sm:p-6 overflow-y-auto flex-1">{children}</div>
       </div>
     </div>
   );
 }
+

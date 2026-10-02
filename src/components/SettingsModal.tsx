@@ -86,11 +86,28 @@ export function SettingsModal({
   }, [config, isOpen]);
 
   const handleTestConnection = async () => {
+    if (!formData.token?.trim() || !formData.owner?.trim() || !formData.repo?.trim()) {
+      setTestResult({
+        ok: false,
+        message: "Personal Access Token, GitHub Owner, and Repository Name are all required.",
+      });
+      return;
+    }
     setTesting(true);
     setTestResult(null);
     try {
       const result = await testGitHubConnection(formData);
       setTestResult(result);
+      if (result.ok) {
+        if (result.defaultBranch && !formData.branch?.trim()) {
+          setFormData((prev) => ({ ...prev, branch: result.defaultBranch || "main" }));
+        }
+        await saveGitHubConfig({
+          ...formData,
+          enabled: true,
+        });
+        onConfigUpdated();
+      }
     } catch (err: any) {
       setTestResult({ ok: false, message: err.message || "Failed to test connection" });
     } finally {
@@ -102,7 +119,7 @@ export function SettingsModal({
     e.preventDefault();
     await saveGitHubConfig({
       ...formData,
-      enabled: !!(formData.token && formData.owner && formData.repo),
+      enabled: !!(formData.token?.trim() && formData.owner?.trim() && formData.repo?.trim()),
     });
     await saveUserPreferences(preferences);
     onConfigUpdated();
@@ -111,32 +128,61 @@ export function SettingsModal({
   };
 
   const handleManualPush = async () => {
+    if (!formData.token?.trim() || !formData.owner?.trim() || !formData.repo?.trim()) {
+      setTestResult({
+        ok: false,
+        message: "Please enter your GitHub Personal Access Token, Owner, and Repository Name first.",
+      });
+      return;
+    }
     setIsSyncing(true);
-    setSyncFeedback(null);
+    setSyncFeedback("Uploading bookmarks vault & metadata to GitHub...");
+    setTestResult(null);
     try {
-      await saveGitHubConfig(formData);
+      await saveGitHubConfig({ ...formData, enabled: true });
       const res = await syncVaultToGitHub(formData);
       setSyncFeedback(res.message);
+      setTestResult({
+        ok: res.success,
+        message: res.message,
+      });
       onConfigUpdated();
     } catch (err: any) {
-      setSyncFeedback(err.message || "Push failed");
+      const msg = err.message || "Push failed";
+      setSyncFeedback(msg);
+      setTestResult({ ok: false, message: msg });
     } finally {
       setIsSyncing(false);
     }
   };
 
   const handleManualPull = async () => {
+    if (!formData.token?.trim() || !formData.owner?.trim() || !formData.repo?.trim()) {
+      setTestResult({
+        ok: false,
+        message: "Please enter your GitHub Personal Access Token, Owner, and Repository Name first.",
+      });
+      return;
+    }
     if (!window.confirm("This will merge metadata & tags from your GitHub repository. Proceed?")) {
       return;
     }
     setIsPulling(true);
-    setSyncFeedback(null);
+    setSyncFeedback("Downloading & restoring bookmarks vault from GitHub...");
+    setTestResult(null);
     try {
+      await saveGitHubConfig({ ...formData, enabled: true });
       const res = await pullVaultFromGitHub(formData);
       setSyncFeedback(res.message);
+      setTestResult({
+        ok: res.success,
+        message: res.message,
+      });
       onConfigUpdated();
     } catch (err: any) {
-      setSyncFeedback(err.message || "Pull failed");
+      const msg = err.message || "Pull failed";
+      setSyncFeedback(msg);
+      setTestResult({ ok: false, message: msg });
     } finally {
       setIsPulling(false);
     }
@@ -600,9 +646,10 @@ export function SettingsModal({
                   variant="outline"
                   size="sm"
                   onClick={handleTestConnection}
-                  disabled={testing || !formData.token}
+                  disabled={testing || isSyncing || isPulling}
                   className="gap-1.5 font-bold"
                 >
+                  <RefreshCw className={`w-3.5 h-3.5 ${testing ? "animate-spin text-primary" : ""}`} />
                   {testing ? "Testing..." : "Test Connection"}
                 </Button>
 
@@ -611,12 +658,12 @@ export function SettingsModal({
                   variant="outline"
                   size="sm"
                   onClick={handleManualPush}
-                  disabled={isSyncing || !formData.token}
-                  className="gap-1.5"
+                  disabled={isSyncing || testing || isPulling}
+                  className="gap-1.5 font-bold"
                   title="Upload all local bookmarks and screenshots to GitHub"
                 >
-                  <Upload className="w-3.5 h-3.5" />
-                  {isSyncing ? "Pushing..." : "Manual Push to GitHub"}
+                  <Upload className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin text-primary" : ""}`} />
+                  <span>{isSyncing ? "Pushing..." : "Manual Push to GitHub"}</span>
                 </Button>
 
                 <Button
@@ -624,12 +671,12 @@ export function SettingsModal({
                   variant="outline"
                   size="sm"
                   onClick={handleManualPull}
-                  disabled={isPulling || !formData.token}
-                  className="gap-1.5"
+                  disabled={isPulling || isSyncing || testing}
+                  className="gap-1.5 font-bold"
                   title="Download and restore bookmarks from GitHub"
                 >
-                  <Download className="w-3.5 h-3.5" />
-                  {isPulling ? "Pulling..." : "Manual Pull from GitHub"}
+                  <Download className={`w-3.5 h-3.5 ${isPulling ? "animate-spin text-primary" : ""}`} />
+                  <span>{isPulling ? "Pulling..." : "Manual Pull from GitHub"}</span>
                 </Button>
               </div>
             </div>
@@ -650,7 +697,7 @@ export function SettingsModal({
               variant="outline"
               size="sm"
               onClick={handleExportJSON}
-              className="py-3 font-bold text-xs gap-1.5 justify-center flex items-center"
+              className="h-10 font-bold text-xs gap-1.5 justify-center flex items-center"
             >
               <Download className="w-4 h-4 text-primary" />
               <span>Export JSON Vault</span>
@@ -661,13 +708,13 @@ export function SettingsModal({
               variant="outline"
               size="sm"
               onClick={handleExportHTML}
-              className="py-3 font-bold text-xs gap-1.5 justify-center flex items-center"
+              className="h-10 font-bold text-xs gap-1.5 justify-center flex items-center"
             >
               <Download className="w-4 h-4 text-primary" />
               <span>Export HTML Bookmarks</span>
             </Button>
 
-            <label className="pop-3d border border-border bg-background hover:bg-muted py-3 px-2 flex items-center justify-center gap-1.5 cursor-pointer text-center font-bold text-xs text-foreground">
+            <label className="h-10 pop-3d border border-border bg-card hover:bg-muted/60 px-3 flex items-center justify-center gap-1.5 cursor-pointer text-center font-bold text-xs text-foreground select-none">
               <Upload className="w-4 h-4 text-primary" />
               <span>Import JSON Vault</span>
               <input
