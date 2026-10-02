@@ -91,25 +91,8 @@ export function BookmarkCard({
           : "border-border bg-card"
       }`}
     >
-      {/* Checkbox Selector */}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggleSelect(bookmark.id);
-        }}
-        className="absolute top-2 left-2 z-20 p-1 bg-background/90 hover:bg-background border border-border text-foreground transition-colors cursor-pointer"
-        title={isSelected ? "Deselect" : "Select"}
-      >
-        {isSelected ? (
-          <CheckSquare className="w-4 h-4 text-primary" />
-        ) : (
-          <Square className="w-4 h-4 text-muted-foreground opacity-60 group-hover:opacity-100" />
-        )}
-      </button>
-
       <div>
-        {/* Visual Snapshot Banner */}
+        {/* Visual Snapshot Banner - 100% clean without any overlapping badges or indicators */}
         {showBanner && (
           <div
             onClick={() => onOpenBrowse(bookmark)}
@@ -134,61 +117,31 @@ export function BookmarkCard({
                 </span>
               </div>
             )}
-
-            {/* HTTP Status Badge & Redirect Pill & Screenshot Trigger Overlay */}
-            <div className="absolute top-2 right-2 flex items-center gap-1.5 z-10">
-              {isRedirected && (
-                <span
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono font-bold bg-amber-500/20 text-amber-500 border border-amber-500/40 select-none"
-                  title={`Redirected to: ${bookmark.finalUrl || "different location"}`}
-                >
-                  <ArrowUpRight className="w-3 h-3" />
-                  <span>Redirect</span>
-                </span>
-              )}
-
-              <HttpStatusBadge
-                status={bookmark.httpStatus}
-                statusText={bookmark.httpStatusText}
-              />
-
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onCaptureScreenshot(bookmark);
-                }}
-                className="p-1 bg-background/90 hover:text-primary text-muted-foreground border border-border opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Capture / Update Screenshot"
-              >
-                <Camera className="w-3.5 h-3.5" />
-              </button>
-            </div>
           </div>
         )}
 
-        {/* Card Header Content */}
-        <div className={`p-4 space-y-3 ${showBanner ? "" : "pt-8"}`}>
-          {!showBanner && (
-            <div className="flex items-center justify-end gap-1.5 mb-1">
-              {isRedirected && (
-                <span
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono font-bold bg-amber-500/20 text-amber-500 border border-amber-500/40 select-none"
-                  title={`Redirected to: ${bookmark.finalUrl || "different location"}`}
-                >
-                  <ArrowUpRight className="w-3 h-3" />
-                  <span>Redirect</span>
-                </span>
-              )}
-              <HttpStatusBadge
-                status={bookmark.httpStatus}
-                statusText={bookmark.httpStatusText}
-              />
-            </div>
-          )}
-
+        {/* Card Body Content */}
+        <div className="p-3.5 space-y-2.5">
+          {/* Title Row with Checkbox, Favicon, Title, and Star */}
           <div className="flex items-start justify-between gap-2">
-            {/* Favicon & Title */}
-            <div className="flex items-start gap-2.5 flex-1 min-w-0">
+            <div className="flex items-start gap-2 flex-1 min-w-0">
+              {/* Checkbox Selector */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleSelect(bookmark.id);
+                }}
+                className="p-0.5 mt-0.5 text-muted-foreground hover:text-primary transition-colors cursor-pointer flex-shrink-0"
+                title={isSelected ? "Deselect" : "Select for batch action"}
+              >
+                {isSelected ? (
+                  <CheckSquare className="w-4 h-4 text-primary" />
+                ) : (
+                  <Square className="w-4 h-4 text-muted-foreground/60 hover:text-foreground" />
+                )}
+              </button>
+
               <img
                 src={favicon}
                 alt=""
@@ -197,12 +150,13 @@ export function BookmarkCard({
                 }}
                 className="w-4 h-4 mt-0.5 object-contain flex-shrink-0"
               />
+
               <a
                 href={bookmark.url}
                 onClick={handleTitleClick}
                 target={clickAction === "open_link" ? "_blank" : undefined}
                 rel="noreferrer"
-                className="font-bold text-sm leading-snug tracking-tight text-foreground hover:text-primary transition-colors line-clamp-2 cursor-pointer"
+                className="font-bold text-sm leading-snug tracking-tight text-foreground hover:text-primary transition-colors line-clamp-2 cursor-pointer flex-1"
                 title={bookmark.title}
               >
                 {bookmark.title}
@@ -226,6 +180,24 @@ export function BookmarkCard({
             </button>
           </div>
 
+          {/* Status & Diagnostics Strip (HTTP status badge + Redirect badge) */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <HttpStatusBadge
+              status={bookmark.httpStatus}
+              statusText={bookmark.httpStatusText}
+            />
+
+            {isRedirected && (
+              <span
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono font-bold bg-amber-500/20 text-amber-500 border border-amber-500/40 select-none"
+                title={`Redirected to: ${bookmark.finalUrl || "different location"}`}
+              >
+                <ArrowUpRight className="w-3 h-3" />
+                <span>Redirect</span>
+              </span>
+            )}
+          </div>
+
           {/* Description or Notes preview */}
           {(bookmark.description || bookmark.notes) && (
             <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
@@ -235,7 +207,7 @@ export function BookmarkCard({
 
           {/* Tags */}
           {bookmark.tags && bookmark.tags.length > 0 && (
-            <div className="flex flex-wrap gap-1 pt-1">
+            <div className="flex flex-wrap gap-1 pt-0.5">
               {bookmark.tags.map((tag) => (
                 <button
                   key={tag}
@@ -272,6 +244,18 @@ export function BookmarkCard({
             title="Open Browse Mode (Expanded View)"
           >
             <Compass className="w-3.5 h-3.5 text-primary" />
+          </button>
+
+          {/* Capture Screenshot Button */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onCaptureScreenshot(bookmark);
+            }}
+            className="p-1 hover:text-primary text-muted-foreground"
+            title="Capture / Update Screenshot"
+          >
+            <Camera className="w-3.5 h-3.5" />
           </button>
 
           <button

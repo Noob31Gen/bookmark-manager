@@ -1,4 +1,4 @@
-import{c as f,n as V,j as e,r as p,I as L,B as z,T as B,g as q,d as P}from"./index-XIuCKTXe.js";import{t as xe}from"./chromeBookmarks-DWTnncBQ.js";import{S as pe,M as K,E as O,R as he}from"./Modal-sNfNBL_s.js";import{G as Q,a as me,B as J,b as H,C as fe}from"./Badge-m_4EE_u4.js";/**
+import{c as f,n as V,j as e,r as p,I as L,B as z,T as B,g as q,d as P}from"./index-ClnYSvr6.js";import{t as xe}from"./chromeBookmarks-DWTnncBQ.js";import{S as pe,M as K,E as O,R as he}from"./Modal-Bo3_eAfx.js";import{G as Q,a as me,B as J,b as H,C as fe}from"./Badge-B-vulRhx.js";/**
  * @license lucide-react v1.49.0 - ISC
  *
  * This source code is licensed under the ISC license.
