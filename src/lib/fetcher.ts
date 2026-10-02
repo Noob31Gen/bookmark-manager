@@ -95,8 +95,17 @@ export async function fetchLivePageDetails(
     }
 
     const htmlText = await res.text();
+
+    // Strip preload/prefetch links, stylesheets, and scripts before DOM parsing
+    // to prevent Chromium from initiating background subresource preloads (e.g. fonts, next.js chunks)
+    const sanitizedHtml = htmlText
+      .replace(/<link\s+[^>]*rel=["']?(?:preload|prefetch|modulepreload|stylesheet|prerender)["']?[^>]*>/gi, "")
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "")
+      .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "");
+
     const parser = new DOMParser();
-    const doc = parser.parseFromString(htmlText, "text/html");
+    const doc = parser.parseFromString(sanitizedHtml, "text/html");
 
     const getMeta = (names: string[]) => {
       for (const name of names) {
