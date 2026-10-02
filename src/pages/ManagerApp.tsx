@@ -1107,7 +1107,7 @@ export function ManagerApp() {
           <Folder className="w-5 h-5 mb-0.5" />
           <span>Filters</span>
           {(selectedFolderId || selectedTag || selectedDomain || httpCodeFilter) && (
-            <span className="absolute top-1 right-2 w-2 h-2 bg-primary rounded-full ring-2 ring-card" />
+            <span className="absolute top-1 right-2 w-2 h-2 bg-primary ring-2 ring-card" />
           )}
         </button>
 

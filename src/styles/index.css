@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 
 @theme {
   --color-border: var(--border);
@@ -20,7 +21,7 @@
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
 
-  /* All radii 0 for signature sharp boxy neo-brutalist design */
+  /* All radii → 0 for signature sharp boxy neo-brutalist design */
   --radius-sm: 0;
   --radius-md: 0;
   --radius-lg: 0;
@@ -73,6 +74,8 @@
   --ring: oklch(0.85 0.18 90);
 }
 
+/* ─── Animation Keyframes ─── */
+
 @keyframes enter {
   from {
     opacity: var(--tw-enter-opacity, 1);
@@ -102,7 +105,7 @@ html, body {
   margin: 0;
   padding: 0;
   width: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
   background-color: var(--background);
   color: var(--foreground);
   -webkit-font-smoothing: antialiased;
@@ -114,7 +117,7 @@ html, body {
   flex-direction: column;
 }
 
-/* Sharp block accent marker */
+/* Sharp block accent marker — straight underline block, no skew */
 .marker-slanted {
   position: relative;
   display: inline-block;
@@ -139,6 +142,7 @@ html, body {
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
+/* Desktop/Mouse: 3D pop on hover, depress on active click */
 @media (hover: hover) {
   .pop-3d:hover {
     transform: translate(3px, -3px);
@@ -154,6 +158,7 @@ html, body {
   }
 }
 
+/* Touch Devices: 3D response active only while finger is pressed down */
 @media (hover: none) {
   .pop-3d:active {
     transform: translate(2px, -2px);
@@ -191,19 +196,26 @@ html, body {
   scrollbar-width: none;
 }
 
-/* Animation utilities */
+/* Animation utilities (matching reference timing) */
 .animate-in {
   animation-name: enter;
-  animation-duration: 200ms;
+  animation-duration: 150ms;
   animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
   animation-fill-mode: both;
 }
 .fade-in { --tw-enter-opacity: 0; }
 .slide-in-from-bottom-4 { --tw-enter-translate-y: 1rem; }
+.zoom-in { --tw-enter-scale: 0.95; }
 .zoom-in-95 { --tw-enter-scale: 0.95; }
+
+/* Animation duration overrides (Tailwind's duration-* only sets transition-duration) */
+.animate-in.duration-150 { animation-duration: 150ms; }
+.animate-in.duration-200 { animation-duration: 200ms; }
+.animate-in.duration-300 { animation-duration: 300ms; }
+.animate-in.duration-500 { animation-duration: 500ms; }
+.animate-in.duration-700 { animation-duration: 700ms; }
 
 /* Mobile safe area utility */
 .safe-area-bottom {
   padding-bottom: calc(0.375rem + env(safe-area-inset-bottom, 0px));
 }
-
