@@ -45,7 +45,7 @@ import {
   getUserPreferences,
   DEFAULT_USER_PREFERENCES,
 } from "../lib/metadataStore";
-import { captureActiveTabScreenshot } from "../lib/capture";
+import { captureActiveTabScreenshot, captureBookmarkUrlScreenshot } from "../lib/capture";
 import { runBatchRefetch, fetchLivePageDetails } from "../lib/fetcher";
 import { getDomain } from "../lib/utils";
 import { Header } from "../components/layout/Header";
@@ -501,7 +501,8 @@ export function ManagerApp() {
   };
 
   const handleCaptureScreenshot = async (bookmark: EnhancedBookmark) => {
-    const screenshot = await captureActiveTabScreenshot();
+    if (!bookmark.url) return;
+    const screenshot = await captureBookmarkUrlScreenshot(bookmark.url);
     if (screenshot) {
       await updateBookmark(bookmark.id, { screenshot });
       refreshData();

@@ -66,6 +66,112 @@ export async function captureActiveTabScreenshot(): Promise<string | undefined> 
   }
 }
 
+// Capture live screenshot for a specific bookmark URL
+// If the tab is already open, it captures that tab; otherwise it opens a tab, waits for load, takes snapshot, and restores focus
+export async function captureBookmarkUrlScreenshot(url: string): Promise<string | undefined> {
+  if (!isChrome || !chrome.tabs) return undefined;
+  if (!url || !url.startsWith("http")) return undefined;
+
+  try {
+    // 1. Check if the user already has a tab open with this bookmark's URL
+    const allTabs = await new Promise<chrome.tabs.Tab[]>((resolve) => {
+      chrome.tabs.query({}, (tabs) => resolve(tabs || []));
+    });
+
+    const targetDomain = new URL(url).hostname;
+    const existingTab = allTabs.find(
+      (t) => t.url && (t.url === url || (t.url.includes(targetDomain) && !t.url.startsWith("chrome://")))
+    );
+
+    const [currentTab] = await new Promise<chrome.tabs.Tab[]>((resolve) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => resolve(tabs || []));
+    });
+
+    if (existingTab && existingTab.id && existingTab.windowId !== undefined) {
+      // Temporarily activate existing tab to take the snapshot
+      await new Promise<void>((resolve) => {
+        chrome.tabs.update(existingTab.id!, { active: true }, () => resolve());
+      });
+      await new Promise((r) => setTimeout(r, 600)); // allow render settle
+
+      const rawDataUrl = await new Promise<string>((resolve, reject) => {
+        chrome.tabs.captureVisibleTab(existingTab.windowId, { format: "png" }, (data) => {
+          if (chrome.runtime.lastError || !data) {
+            reject(chrome.runtime.lastError || new Error("Capture failed"));
+          } else {
+            resolve(data);
+          }
+        });
+      });
+
+      // Restore focus to original manager tab
+      if (currentTab?.id) {
+        chrome.tabs.update(currentTab.id, { active: true });
+      }
+
+      return await compressImageDataUrl(rawDataUrl);
+    }
+
+    // 2. Open a temporary background/visible tab to load the bookmark's actual page
+    const newTab = await new Promise<chrome.tabs.Tab>((resolve) => {
+      chrome.tabs.create({ url, active: true }, (tab) => resolve(tab));
+    });
+
+    if (!newTab || !newTab.id || newTab.windowId === undefined) {
+      return undefined;
+    }
+
+    return new Promise<string | undefined>((resolve) => {
+      const timeoutId = setTimeout(async () => {
+        chrome.tabs.onUpdated.removeListener(listener);
+        try {
+          if (newTab.id) chrome.tabs.remove(newTab.id);
+          if (currentTab?.id) chrome.tabs.update(currentTab.id, { active: true });
+        } catch {}
+        resolve(undefined);
+      }, 15000); // 15s max timeout
+
+      const listener = async (tabId: number, changeInfo: chrome.tabs.TabChangeInfo) => {
+        if (tabId === newTab.id && changeInfo.status === "complete") {
+          chrome.tabs.onUpdated.removeListener(listener);
+          clearTimeout(timeoutId);
+
+          // Give dynamic images & web fonts 900ms to render
+          await new Promise((r) => setTimeout(r, 900));
+
+          try {
+            chrome.tabs.captureVisibleTab(newTab.windowId, { format: "png" }, async (rawDataUrl) => {
+              // Clean up: close temporary tab and refocus manager tab
+              try {
+                if (newTab.id) chrome.tabs.remove(newTab.id);
+                if (currentTab?.id) chrome.tabs.update(currentTab.id, { active: true });
+              } catch {}
+
+              if (rawDataUrl) {
+                const compressed = await compressImageDataUrl(rawDataUrl);
+                resolve(compressed);
+              } else {
+                resolve(undefined);
+              }
+            });
+          } catch {
+            try {
+              if (newTab.id) chrome.tabs.remove(newTab.id);
+              if (currentTab?.id) chrome.tabs.update(currentTab.id, { active: true });
+            } catch {}
+            resolve(undefined);
+          }
+        }
+      };
+
+      chrome.tabs.onUpdated.addListener(listener);
+    });
+  } catch (err) {
+    console.warn("Could not capture bookmark tab snapshot:", err);
+    return undefined;
+  }
+}
+
 // Get metadata and reader text from the current active tab
 export async function extractActiveTabDetails(): Promise<ExtractedPageData | null> {
   if (!isChrome) {
