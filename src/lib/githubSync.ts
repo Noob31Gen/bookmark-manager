@@ -196,47 +196,122 @@ export async function testGitHubConnection(
   }
 }
 
-// --- Markdown Catalog Generator ---
+// --- Markdown Catalog Generator (Privacy-Safe High-Level Analytics & Metrics) ---
 export function generateMarkdownReadme(
   bookmarks: EnhancedBookmark[],
   folderMap: Record<string, string>
 ): string {
   const dateStr = new Date().toLocaleString();
+  const total = bookmarks.length;
   const starred = bookmarks.filter((b) => b.isFavorite).length;
+  const withScreenshots = bookmarks.filter((b) => b.screenshot || b.githubSha).length;
+  const withTags = bookmarks.filter((b) => b.tags && b.tags.length > 0).length;
+  const withNotes = bookmarks.filter((b) => b.notes || b.description).length;
+
+  // 1. Group by folder
+  const folderCounts: Record<string, { total: number; starred: number }> = {};
+  for (const b of bookmarks) {
+    const folder = folderMap[b.parentId || ""] || "Bookmarks Bar";
+    if (!folderCounts[folder]) folderCounts[folder] = { total: 0, starred: 0 };
+    folderCounts[folder].total++;
+    if (b.isFavorite) folderCounts[folder].starred++;
+  }
+
+  // 2. Domain breakdown
+  const domainCounts: Record<string, number> = {};
+  for (const b of bookmarks) {
+    const domain = getDomain(b.url);
+    if (domain && domain !== "unknown") {
+      domainCounts[domain] = (domainCounts[domain] || 0) + 1;
+    }
+  }
+  const topDomains = Object.entries(domainCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  // 3. Tag breakdown
+  const tagCounts: Record<string, number> = {};
+  for (const b of bookmarks) {
+    for (const t of b.tags || []) {
+      const clean = t.trim().toLowerCase();
+      if (clean) tagCounts[clean] = (tagCounts[clean] || 0) + 1;
+    }
+  }
+  const topTags = Object.entries(tagCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  // 4. Health breakdown
+  let healthy = 0;
+  let redirects = 0;
+  let errors = 0;
+  let unchecked = 0;
+  for (const b of bookmarks) {
+    if (!b.httpStatus) {
+      unchecked++;
+    } else if (b.httpStatus >= 200 && b.httpStatus < 300) {
+      healthy++;
+    } else if (b.httpStatus >= 300 && b.httpStatus < 400) {
+      redirects++;
+    } else {
+      errors++;
+    }
+  }
 
   let md = `# 📑 Personal Bookmarks Vault\n\n`;
   md += `> Automatically synchronized and version-controlled with [Noob31 Bookmark Vault](https://noob31.com)\n\n`;
+
   md += `### 📊 Vault Overview\n\n`;
-  md += `| Total Bookmarks | ⭐ Starred | Last Synchronized |\n`;
-  md += `| :---: | :---: | :---: |\n`;
-  md += `| **${bookmarks.length}** | **${starred}** | \`${dateStr}\` |\n\n`;
+  md += `| Metric | Count | Details |\n`;
+  md += `| :--- | :---: | :--- |\n`;
+  md += `| 🔖 **Total Bookmarks** | **${total}** | Across ${Object.keys(folderCounts).length} folders |\n`;
+  md += `| ⭐ **Starred / Favorites** | **${starred}** | ${total > 0 ? Math.round((starred / total) * 100) : 0}% of vault |\n`;
+  md += `| 📸 **Visual Snapshots** | **${withScreenshots}** | Saved in \`assets/screenshots/\` |\n`;
+  md += `| 🏷️ **Tagged Items** | **${withTags}** | ${Object.keys(tagCounts).length} unique tags |\n`;
+  md += `| 📝 **Annotated Notes** | **${withNotes}** | With descriptions/notes |\n`;
+  md += `| 🕒 **Last Synchronized** | \`${dateStr}\` | Automated Git snapshot |\n\n`;
   md += `---\n\n`;
 
-  const grouped: Record<string, EnhancedBookmark[]> = {};
-  for (const b of bookmarks) {
-    const folder = folderMap[b.parentId || ""] || "Bookmarks Bar";
-    if (!grouped[folder]) grouped[folder] = [];
-    grouped[folder].push(b);
+  // Folders Table
+  md += `### 📁 Folders Distribution\n\n`;
+  md += `| Folder Name | Bookmarks | Starred | % Share |\n`;
+  md += `| :--- | :---: | :---: | :---: |\n`;
+  const sortedFolders = Object.entries(folderCounts).sort((a, b) => b[1].total - a[1].total);
+  for (const [folderName, stats] of sortedFolders) {
+    const pct = total > 0 ? ((stats.total / total) * 100).toFixed(1) : "0";
+    md += `| **${folderName}** | ${stats.total} | ${stats.starred > 0 ? `⭐ ${stats.starred}` : "—"} | ${pct}% |\n`;
   }
+  md += `\n---\n\n`;
 
-  for (const [folderName, items] of Object.entries(grouped)) {
-    md += `## 📁 ${folderName} (${items.length})\n\n`;
-    for (const b of items) {
-      const star = b.isFavorite ? "⭐ " : "";
-      const domain = getDomain(b.url);
-      const tags = b.tags && b.tags.length > 0 ? ` • ${b.tags.map((t) => `\`#${t}\``).join(" ")}` : "";
-      const statusBadge = b.httpStatus ? ` \`[${b.httpStatus}]\`` : "";
-      const safeTitle = (b.title || "Untitled").replace(/[\[\]]/g, "\\$&");
-      const safeUrl = b.url || "#";
-
-      md += `- ${star}[${safeTitle}](${safeUrl}) — *${domain}*${statusBadge}${tags}\n`;
-      if (b.description || b.notes) {
-        const note = (b.description || b.notes || "").replace(/\n+/g, " ");
-        md += `  > ${note}\n`;
-      }
-    }
-    md += `\n`;
+  // Top Domains & Tags
+  md += `### 🌐 Top Domains & 🏷️ Popular Tags\n\n`;
+  md += `| Top Domains (${topDomains.length}) | Items | Top Tags (${topTags.length}) | Count |\n`;
+  md += `| :--- | :---: | :--- | :---: |\n`;
+  const maxRows = Math.max(topDomains.length, topTags.length, 1);
+  for (let i = 0; i < maxRows; i++) {
+    const d = topDomains[i];
+    const t = topTags[i];
+    const domainCol = d ? `\`${d[0]}\`` : "—";
+    const domainCount = d ? `${d[1]}` : "—";
+    const tagCol = t ? `\`#${t[0]}\`` : "—";
+    const tagCount = t ? `${t[1]}` : "—";
+    md += `| ${domainCol} | ${domainCount} | ${tagCol} | ${tagCount} |\n`;
   }
+  md += `\n---\n\n`;
+
+  // Diagnostics & Health
+  md += `### 🩺 Link Health Status\n\n`;
+  md += `- 🟢 **Healthy (HTTP 200):** ${healthy} links\n`;
+  if (redirects > 0) md += `- 🟡 **Redirects (3xx):** ${redirects} links\n`;
+  if (errors > 0) md += `- 🔴 **Errors / Dead Links (4xx/5xx):** ${errors} links\n`;
+  if (unchecked > 0) md += `- ⚪ **Unchecked / Pending Diagnostics:** ${unchecked} links\n`;
+  md += `\n---\n\n`;
+
+  // Repository Guide
+  md += `### 🗂️ Repository Architecture\n\n`;
+  md += `- **\`.noob31/vault-index.json\`**: Complete structured database for rapid cross-device synchronization and restoration.\n`;
+  md += `- **\`bookmarks/\`**: Individual JSON definitions categorized by folder structure.\n`;
+  md += `- **\`assets/screenshots/\`**: Viewport snapshots and visual assets for saved pages.\n`;
 
   return md;
 }
