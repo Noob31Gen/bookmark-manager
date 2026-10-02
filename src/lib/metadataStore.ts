@@ -9,6 +9,7 @@ const THEME_KEY = "noob31_theme";
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   fetchScope: "all",
   skip200OnRefetch: true,
+  refetchErrorsOnly: false,
   clickAction: "browse_mode",
   mainViewThumbnail: "auto",
   defaultSort: "date-desc",

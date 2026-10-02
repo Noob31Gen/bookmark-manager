@@ -70,6 +70,7 @@ export interface EnhancedBookmark {
 export interface UserPreferences {
   fetchScope: FetchScope;
   skip200OnRefetch: boolean;
+  refetchErrorsOnly: boolean;
   clickAction: ClickAction;
   mainViewThumbnail: MainViewThumbnail;
   defaultSort: SortField;

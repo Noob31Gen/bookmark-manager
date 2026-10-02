@@ -96,13 +96,16 @@ export async function fetchLivePageDetails(
 
     const htmlText = await res.text();
 
-    // Strip preload/prefetch links, stylesheets, and scripts before DOM parsing
-    // to prevent Chromium from initiating background subresource preloads (e.g. fonts, next.js chunks)
+    // Strip scripts, stylesheets, preloads, and embedded frames before DOM parsing
+    // to prevent Chromium from executing scripts, loading external CSS/fonts, or triggering CSP violations
     const sanitizedHtml = htmlText
-      .replace(/<link\s+[^>]*rel=["']?(?:preload|prefetch|modulepreload|stylesheet|prerender)["']?[^>]*>/gi, "")
-      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
-      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "")
-      .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "");
+      .replace(/<script\b[\s\S]*?<\/script\s*>/gi, "")
+      .replace(/<script\b[^>]*\/?>/gi, "")
+      .replace(/<noscript\b[\s\S]*?<\/noscript\s*>/gi, "")
+      .replace(/<style\b[\s\S]*?<\/style\s*>/gi, "")
+      .replace(/<iframe\b[\s\S]*?<\/iframe\s*>/gi, "")
+      .replace(/<iframe\b[^>]*\/?>/gi, "")
+      .replace(/<link\b[^>]*\b(?:preload|prefetch|modulepreload|stylesheet|prerender)\b[^>]*\/?>/gi, "");
 
     const parser = new DOMParser();
     const doc = parser.parseFromString(sanitizedHtml, "text/html");
@@ -232,12 +235,13 @@ export async function runBatchRefetch(
   options: {
     fetchScope: FetchScope;
     skip200OnRefetch: boolean;
+    refetchErrorsOnly?: boolean;
     concurrency?: number;
   },
   onProgress: (progress: BatchFetchProgress) => void,
   abortSignal?: AbortSignal
 ): Promise<{ processed: number; success: number; errors: number; skipped: number; aborted: boolean }> {
-  const { fetchScope, skip200OnRefetch, concurrency = 4 } = options;
+  const { fetchScope, skip200OnRefetch, refetchErrorsOnly = false, concurrency = 4 } = options;
 
   let current = 0;
   let successCount = 0;
@@ -264,7 +268,20 @@ export async function runBatchRefetch(
   // Prepare queue
   const queue: EnhancedBookmark[] = [];
   for (const b of bookmarks) {
-    if (skip200OnRefetch && b.httpStatus === 200 && b.favicon) {
+    const isError =
+      b.httpStatus !== undefined &&
+      b.httpStatus !== null &&
+      (b.httpStatus >= 400 || b.httpStatus === 0);
+    const isHealthy200 = b.httpStatus === 200 && b.favicon;
+
+    if (refetchErrorsOnly) {
+      if (!isError) {
+        skippedCount++;
+        current++;
+      } else {
+        queue.push(b);
+      }
+    } else if (skip200OnRefetch && isHealthy200) {
       skippedCount++;
       current++;
     } else {

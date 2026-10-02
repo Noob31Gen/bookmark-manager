@@ -429,6 +429,7 @@ export function ManagerApp() {
         {
           fetchScope: preferences.fetchScope,
           skip200OnRefetch: preferences.skip200OnRefetch,
+          refetchErrorsOnly: preferences.refetchErrorsOnly,
           concurrency: preferences.concurrencyLimit,
         },
         (prog) => setRefetchProgress(prog),
