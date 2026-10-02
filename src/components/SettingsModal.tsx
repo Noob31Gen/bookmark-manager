@@ -329,6 +329,28 @@ export function SettingsModal({
               </div>
             </div>
 
+            {/* Smart Refetch Rule: Errors Only */}
+            <div className="p-3 bg-muted/40 border border-border flex items-start gap-3">
+              <input
+                type="checkbox"
+                id="refetch-errors-only-toggle"
+                checked={preferences.refetchErrorsOnly}
+                onChange={(e) =>
+                  setPreferences({ ...preferences, refetchErrorsOnly: e.target.checked })
+                }
+                className="size-4 mt-0.5 accent-primary cursor-pointer flex-shrink-0"
+              />
+              <label htmlFor="refetch-errors-only-toggle" className="text-xs cursor-pointer select-none">
+                <span className="font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                  <ShieldAlert className="w-3.5 h-3.5 text-red-500" />
+                  Only refetch bookmarks with errors (4xx / 5xx / Broken)
+                </span>
+                <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                  When clicking "Refetch All", only re-query bookmarks that currently have HTTP errors (such as 404, 500, or network timeouts). All healthy and unchecked bookmarks will be skipped.
+                </p>
+              </label>
+            </div>
+
             {/* Smart Refetch Rule: Skip 200 */}
             <div className="p-3 bg-muted/40 border border-border flex items-start gap-3">
               <input
