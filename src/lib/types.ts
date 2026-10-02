@@ -22,6 +22,7 @@ export interface BookmarkMetadata {
   readerContent?: string;
   lastCaptured?: number;
   githubSha?: string;
+  fetchedTitle?: string; // Live parsed title from webpage
   
   // HTTP status & diagnostics
   httpStatus?: number; // 200, 301, 404, 500, etc.
@@ -40,6 +41,7 @@ export interface EnhancedBookmark {
   id: string;
   parentId?: string;
   title: string;
+  fetchedTitle?: string;
   url?: string;
   dateAdded?: number;
   dateGroupModified?: number;
@@ -71,6 +73,7 @@ export interface UserPreferences {
   fetchScope: FetchScope;
   skip200OnRefetch: boolean;
   refetchErrorsOnly: boolean;
+  autoUpdateChromeBookmarkTitles: boolean;
   clickAction: ClickAction;
   mainViewThumbnail: MainViewThumbnail;
   defaultSort: SortField;

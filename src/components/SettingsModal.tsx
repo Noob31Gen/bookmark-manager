@@ -16,10 +16,16 @@ import {
   ShieldAlert,
   MousePointerClick,
   Layout,
+  Type,
 } from "lucide-react";
 import { GitHubConfig, UserPreferences, FetchScope, ClickAction, MainViewThumbnail } from "../lib/types";
 import { testGitHubConnection, syncVaultToGitHub, pullVaultFromGitHub } from "../lib/githubSync";
 import { saveGitHubConfig, getUserPreferences, saveUserPreferences } from "../lib/metadataStore";
+import {
+  getEnhancedBookmarkTree,
+  extractAllBookmarks,
+  syncAllFetchedTitlesToChrome,
+} from "../lib/chromeBookmarks";
 import {
   exportVaultAsJSON,
   exportBookmarksAsNetscapeHTML,
@@ -50,6 +56,7 @@ export function SettingsModal({
     fetchScope: "all",
     skip200OnRefetch: true,
     refetchErrorsOnly: false,
+    autoUpdateChromeBookmarkTitles: false,
     clickAction: "browse_mode",
     mainViewThumbnail: "auto",
     defaultSort: "date-desc",
@@ -62,6 +69,7 @@ export function SettingsModal({
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isPulling, setIsPulling] = useState(false);
+  const [isSyncingTitles, setIsSyncingTitles] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
 
   useEffect(() => {
@@ -152,6 +160,22 @@ export function SettingsModal({
     };
     reader.readAsText(file);
     e.target.value = "";
+  };
+
+  const handleSyncAllTitlesNow = async () => {
+    setIsSyncingTitles(true);
+    setSyncFeedback(null);
+    try {
+      const allTree = await getEnhancedBookmarkTree();
+      const all = extractAllBookmarks(allTree);
+      const res = await syncAllFetchedTitlesToChrome(all);
+      setSyncFeedback(`Successfully updated ${res.updatedCount} Chrome bookmark titles!`);
+      onConfigUpdated();
+    } catch (err: any) {
+      setSyncFeedback("Failed to update titles: " + (err.message || "Unknown error"));
+    } finally {
+      setIsSyncingTitles(false);
+    }
   };
 
   return (
@@ -327,26 +351,44 @@ export function SettingsModal({
               </label>
             </div>
 
-            {/* Smart Refetch Rule: Only Errors */}
-            <div className="p-3 bg-muted/40 border border-border flex items-start gap-3">
-              <input
-                type="checkbox"
-                id="refetch-errors-only-toggle"
-                checked={preferences.refetchErrorsOnly}
-                onChange={(e) =>
-                  setPreferences({ ...preferences, refetchErrorsOnly: e.target.checked })
-                }
-                className="size-4 mt-0.5 accent-primary cursor-pointer flex-shrink-0"
-              />
-              <label htmlFor="refetch-errors-only-toggle" className="text-xs cursor-pointer select-none">
-                <span className="font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                  <ShieldAlert className="w-3.5 h-3.5 text-red-500" />
-                  Only refetch bookmarks with errors (4xx / 5xx / Broken)
-                </span>
-                <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
-                  When enabled, batch refetch will strictly target bookmarks that previously returned HTTP errors (4xx/5xx/network timeouts), skipping healthy (200 OK) and unfetched bookmarks.
-                </p>
-              </label>
+            {/* Auto-Update Chrome Bookmark Titles Rule & Instant Sync Action */}
+            <div className="p-3 bg-muted/40 border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-3 flex-1 min-w-0">
+                <input
+                  type="checkbox"
+                  id="auto-update-titles-toggle"
+                  checked={preferences.autoUpdateChromeBookmarkTitles}
+                  onChange={(e) =>
+                    setPreferences({
+                      ...preferences,
+                      autoUpdateChromeBookmarkTitles: e.target.checked,
+                    })
+                  }
+                  className="size-4 mt-0.5 accent-primary cursor-pointer flex-shrink-0"
+                />
+                <label htmlFor="auto-update-titles-toggle" className="text-xs cursor-pointer select-none">
+                  <span className="font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                    <Type className="w-3.5 h-3.5 text-primary" />
+                    Update Chrome bookmarks with fetched webpage titles
+                  </span>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                    When fetching or refetching, automatically update native Chrome bookmark titles with the live title parsed from the page.
+                  </p>
+                </label>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleSyncAllTitlesNow}
+                disabled={isSyncingTitles}
+                className="font-bold text-xs gap-1.5 flex-shrink-0 whitespace-nowrap self-start sm:self-center"
+                title="Immediately push all fetched titles to Chrome bookmarks"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingTitles ? "animate-spin text-primary" : ""}`} />
+                <span>{isSyncingTitles ? "Syncing Titles..." : "Sync Titles Now"}</span>
+              </Button>
             </div>
           </div>
         </section>

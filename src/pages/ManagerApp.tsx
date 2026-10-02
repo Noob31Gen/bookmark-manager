@@ -430,6 +430,7 @@ export function ManagerApp() {
           fetchScope: preferences.fetchScope,
           skip200OnRefetch: preferences.skip200OnRefetch,
           refetchErrorsOnly: preferences.refetchErrorsOnly,
+          autoUpdateChromeBookmarkTitles: preferences.autoUpdateChromeBookmarkTitles,
           concurrency: preferences.concurrencyLimit,
         },
         (prog) => setRefetchProgress(prog),
@@ -454,7 +455,7 @@ export function ManagerApp() {
   const handleRefetchSingle = async (b: EnhancedBookmark) => {
     if (!b.url) return;
     const res = await fetchLivePageDetails(b.url, preferences.fetchScope);
-    await updateBookmark(b.id, {
+    const updates: any = {
       httpStatus: res.httpStatus,
       httpStatusText: res.httpStatusText,
       finalUrl: res.finalUrl,
@@ -464,7 +465,11 @@ export function ManagerApp() {
       description: res.description || b.description,
       readerContent: res.readerText || b.readerContent,
       tags: res.suggestedTags ? Array.from(new Set([...b.tags, ...res.suggestedTags])) : b.tags,
-    });
+    };
+    if (preferences.autoUpdateChromeBookmarkTitles && res.title) {
+      updates.title = res.title;
+    }
+    await updateBookmark(b.id, updates);
     refreshData();
   };
 

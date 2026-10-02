@@ -398,12 +398,19 @@ export async function runBatchRefetch(
     fetchScope: FetchScope;
     skip200OnRefetch: boolean;
     refetchErrorsOnly?: boolean;
+    autoUpdateChromeBookmarkTitles?: boolean;
     concurrency?: number;
   },
   onProgress: (progress: BatchFetchProgress) => void,
   abortSignal?: AbortSignal
 ): Promise<{ processed: number; success: number; errors: number; skipped: number; aborted: boolean }> {
-  const { fetchScope, skip200OnRefetch, refetchErrorsOnly = false, concurrency = 4 } = options;
+  const {
+    fetchScope,
+    skip200OnRefetch,
+    refetchErrorsOnly = false,
+    autoUpdateChromeBookmarkTitles = false,
+    concurrency = 4,
+  } = options;
 
   let current = 0;
   let successCount = 0;
@@ -477,6 +484,10 @@ export async function runBatchRefetch(
           lastChecked: Date.now(),
         };
 
+        if (result.title) {
+          updates.fetchedTitle = result.title;
+        }
+
         if (fetchScope !== "screenshots_only") {
           if (result.ogImage) updates.ogImage = result.ogImage;
           if (result.favicon) updates.favicon = result.favicon;
@@ -491,6 +502,21 @@ export async function runBatchRefetch(
         }
 
         await saveBookmarkMetadata(item.id, updates);
+
+        // Update native Chrome bookmark title if option is enabled and a title was found
+        if (
+          autoUpdateChromeBookmarkTitles &&
+          result.title &&
+          typeof chrome !== "undefined" &&
+          chrome.bookmarks &&
+          chrome.bookmarks.update
+        ) {
+          try {
+            await new Promise<void>((resolve) => {
+              chrome.bookmarks.update(item.id, { title: result.title }, () => resolve());
+            });
+          } catch {}
+        }
 
         if (result.httpStatus >= 200 && result.httpStatus < 400) {
           successCount++;

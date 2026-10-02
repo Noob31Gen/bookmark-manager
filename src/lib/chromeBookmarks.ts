@@ -102,6 +102,7 @@ function transformNode(
     isFavorite: meta.isFavorite || false,
     readerContent: meta.readerContent,
     lastCaptured: meta.lastCaptured,
+    fetchedTitle: meta.fetchedTitle,
     httpStatus: meta.httpStatus,
     httpStatusText: meta.httpStatusText,
     finalUrl: meta.finalUrl,
@@ -397,4 +398,25 @@ export function subscribeToBookmarkChanges(onChange: () => void): () => void {
     chrome.bookmarks.onMoved.removeListener(listener);
     chrome.bookmarks.onChildrenReordered.removeListener(listener);
   };
+}
+
+// Update Chrome bookmark titles for all bookmarks where a fetched title is available
+export async function syncAllFetchedTitlesToChrome(
+  bookmarks: EnhancedBookmark[]
+): Promise<{ updatedCount: number }> {
+  let updatedCount = 0;
+  for (const b of bookmarks) {
+    const targetTitle = b.fetchedTitle || b.title;
+    if (targetTitle && b.url && !b.isFolder) {
+      if (isChromeExtension) {
+        try {
+          await new Promise<void>((resolve) => {
+            chrome.bookmarks.update(b.id, { title: targetTitle }, () => resolve());
+          });
+          updatedCount++;
+        } catch {}
+      }
+    }
+  }
+  return { updatedCount };
 }
