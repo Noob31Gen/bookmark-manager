@@ -1,21 +1,24 @@
 import { useState, useEffect } from "react";
 import {
-  Cloud,
-  CheckCircle2,
-  AlertTriangle,
+  FolderGit2,
+  Database,
   Download,
   Upload,
   Key,
-  FolderGit2,
+  CheckCircle2,
+  AlertTriangle,
   RefreshCw,
   Eye,
   EyeOff,
-  Database,
   ExternalLink,
+  Sliders,
+  ShieldCheck,
+  MousePointerClick,
+  Layout,
 } from "lucide-react";
-import { GitHubConfig } from "../lib/types";
+import { GitHubConfig, UserPreferences, FetchScope, ClickAction, MainViewThumbnail } from "../lib/types";
 import { testGitHubConnection, syncVaultToGitHub, pullVaultFromGitHub } from "../lib/githubSync";
-import { saveGitHubConfig } from "../lib/metadataStore";
+import { saveGitHubConfig, getUserPreferences, saveUserPreferences } from "../lib/metadataStore";
 import {
   exportVaultAsJSON,
   exportBookmarksAsNetscapeHTML,
@@ -42,6 +45,16 @@ export function SettingsModal({
   totalBookmarks,
 }: SettingsModalProps) {
   const [formData, setFormData] = useState<GitHubConfig>(config);
+  const [preferences, setPreferences] = useState<UserPreferences>({
+    fetchScope: "all",
+    skip200OnRefetch: true,
+    clickAction: "browse_mode",
+    mainViewThumbnail: "auto",
+    defaultSort: "date-desc",
+    viewMode: "cards",
+    concurrencyLimit: 4,
+  });
+
   const [showToken, setShowToken] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -51,6 +64,7 @@ export function SettingsModal({
 
   useEffect(() => {
     setFormData(config);
+    getUserPreferences().then((p) => setPreferences(p));
     setTestResult(null);
     setSyncFeedback(null);
   }, [config, isOpen]);
@@ -68,14 +82,15 @@ export function SettingsModal({
     }
   };
 
-  const handleSaveConfig = async (e: React.FormEvent) => {
+  const handleSaveAll = async (e: React.FormEvent) => {
     e.preventDefault();
     await saveGitHubConfig({
       ...formData,
       enabled: !!(formData.token && formData.owner && formData.repo),
     });
+    await saveUserPreferences(preferences);
     onConfigUpdated();
-    setSyncFeedback("Settings saved successfully!");
+    setSyncFeedback("Settings successfully saved!");
     setTimeout(() => setSyncFeedback(null), 3000);
   };
 
@@ -141,31 +156,226 @@ export function SettingsModal({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Vault Settings & GitHub Cloud"
-      subtitle="Configure cloud sync, asset storage, and backup options"
+      title="Vault Settings & Preferences"
+      subtitle="Click actions, thumbnails, refetch rules, and GitHub cloud sync"
       maxWidth="max-w-2xl"
     >
-      <div className="space-y-8">
-        {/* GitHub Cloud Vault Section */}
+      <form onSubmit={handleSaveAll} className="space-y-8">
+        {/* Interaction & UI Behavior Settings */}
         <section className="space-y-4">
           <div className="border-b border-border pb-2 flex items-center justify-between">
             <h3 className="text-sm font-extrabold uppercase tracking-wider text-foreground flex items-center gap-2">
-              <FolderGit2 className="w-4 h-4 text-primary" /> GitHub Storage & Asset CDN
+              <MousePointerClick className="w-4 h-4 text-primary" /> Interaction & Visual Preferences
             </h3>
-            <span className="text-[11px] text-muted-foreground">Serverless Cloud Storage</span>
+            <span className="text-[11px] font-mono text-muted-foreground font-bold">UI Behavior</span>
           </div>
 
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            Store your entire bookmark hierarchy, tags, metadata, and live tab screenshots directly
-            in a private or public GitHub repository.
-          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Click Action Setting */}
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">
+                On Clicking a Bookmark
+              </label>
+              <select
+                value={preferences.clickAction}
+                onChange={(e) =>
+                  setPreferences({ ...preferences, clickAction: e.target.value as ClickAction })
+                }
+                className="w-full bg-background border border-input px-3 py-2 text-xs text-foreground font-bold uppercase outline-none focus:border-primary cursor-pointer"
+              >
+                <option value="browse_mode">Open Browse Mode (Expanded Inspector)</option>
+                <option value="open_link">Open Link Directly in New Tab</option>
+              </select>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Browse Mode displays full screenshots, OG images, in-page image gallery, and redirect destination.
+              </p>
+            </div>
 
-          <form onSubmit={handleSaveConfig} className="space-y-4">
+            {/* Main View Thumbnail Display Setting */}
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">
+                Main View Thumbnail Display
+              </label>
+              <select
+                value={preferences.mainViewThumbnail}
+                onChange={(e) =>
+                  setPreferences({
+                    ...preferences,
+                    mainViewThumbnail: e.target.value as MainViewThumbnail,
+                  })
+                }
+                className="w-full bg-background border border-input px-3 py-2 text-xs text-foreground font-bold uppercase outline-none focus:border-primary cursor-pointer"
+              >
+                <option value="auto">Auto (Screenshot priority, fallback to OG)</option>
+                <option value="embed_only">OG Social Embed Images Only</option>
+                <option value="screenshot_only">Viewport Screenshots Only</option>
+                <option value="icon_only">Favicon / Site Logo Only</option>
+                <option value="none">None (Minimalist No-Banner Cards)</option>
+              </select>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Controls what image type is prioritized in the main bookmark card view.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* Fetcher & Refetch Rules */}
+        <section className="space-y-4">
+          <div className="border-b border-border pb-2 flex items-center justify-between">
+            <h3 className="text-sm font-extrabold uppercase tracking-wider text-foreground flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-primary" /> Refetch & Extraction Scope
+            </h3>
+            <span className="text-[11px] font-mono text-muted-foreground font-bold">Metadata / Diagnostics</span>
+          </div>
+
+          <div className="space-y-3">
+            {/* Fetch Scope */}
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">
+                Refetch Scope Options
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <label
+                  className={`pop-3d p-2.5 border cursor-pointer flex flex-col gap-1 transition-all ${
+                    preferences.fetchScope === "all"
+                      ? "bg-primary/10 border-primary text-foreground font-bold"
+                      : "bg-card border-border text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="fetchScope"
+                      checked={preferences.fetchScope === "all"}
+                      onChange={() => setPreferences({ ...preferences, fetchScope: "all" })}
+                      className="accent-primary"
+                    />
+                    <span className="text-xs font-bold">Full Capture</span>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground">
+                    Icons, OG Embeds & Page Snapshots
+                  </span>
+                </label>
+
+                <label
+                  className={`pop-3d p-2.5 border cursor-pointer flex flex-col gap-1 transition-all ${
+                    preferences.fetchScope === "embeds_only"
+                      ? "bg-primary/10 border-primary text-foreground font-bold"
+                      : "bg-card border-border text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="fetchScope"
+                      checked={preferences.fetchScope === "embeds_only"}
+                      onChange={() => setPreferences({ ...preferences, fetchScope: "embeds_only" })}
+                      className="accent-primary"
+                    />
+                    <span className="text-xs font-bold">Icons & Embeds</span>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground">
+                    Favicons, OG Image & Meta Tags
+                  </span>
+                </label>
+
+                <label
+                  className={`pop-3d p-2.5 border cursor-pointer flex flex-col gap-1 transition-all ${
+                    preferences.fetchScope === "screenshots_only"
+                      ? "bg-primary/10 border-primary text-foreground font-bold"
+                      : "bg-card border-border text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="fetchScope"
+                      checked={preferences.fetchScope === "screenshots_only"}
+                      onChange={() => setPreferences({ ...preferences, fetchScope: "screenshots_only" })}
+                      className="accent-primary"
+                    />
+                    <span className="text-xs font-bold">Screenshots Only</span>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground">
+                    Visual Tab Screenshots Only
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {/* Smart Refetch Rule: Skip 200 */}
+            <div className="p-3 bg-muted/40 border border-border flex items-start gap-3">
+              <input
+                type="checkbox"
+                id="skip-200-toggle"
+                checked={preferences.skip200OnRefetch}
+                onChange={(e) =>
+                  setPreferences({ ...preferences, skip200OnRefetch: e.target.checked })
+                }
+                className="size-4 mt-0.5 accent-primary cursor-pointer flex-shrink-0"
+              />
+              <label htmlFor="skip-200-toggle" className="text-xs cursor-pointer select-none">
+                <span className="font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-green-500" />
+                  Disable refetch for all bookmarks with HTTP code 200
+                </span>
+                <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                  When clicking "Refetch All", healthy bookmarks with code 200 and existing icons will be skipped. Only broken (404/500) or unchecked bookmarks will be refreshed.
+                </p>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        {/* GitHub Cloud Storage Section */}
+        <section className="space-y-4">
+          <div className="border-b border-border pb-2 flex items-center justify-between">
+            <h3 className="text-sm font-extrabold uppercase tracking-wider text-foreground flex items-center gap-2">
+              <FolderGit2 className="w-4 h-4 text-primary" /> GitHub Cloud Storage & Sync
+            </h3>
+            <span className="text-[11px] font-mono text-muted-foreground font-bold">Git CDN & Vault</span>
+          </div>
+
+          <div className="space-y-4">
+            {/* Automatic vs Manual Sync Options */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-muted/30 border border-border">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="autosync-toggle"
+                  checked={formData.autoSync}
+                  onChange={(e) => setFormData({ ...formData, autoSync: e.target.checked })}
+                  className="size-4 accent-primary cursor-pointer"
+                />
+                <label htmlFor="autosync-toggle" className="text-xs font-bold uppercase tracking-wider cursor-pointer">
+                  Enable Automatic Cloud Sync
+                </label>
+              </div>
+
+              {formData.autoSync && (
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-muted-foreground whitespace-nowrap">Interval:</label>
+                  <select
+                    value={formData.syncIntervalMinutes}
+                    onChange={(e) =>
+                      setFormData({ ...formData, syncIntervalMinutes: Number(e.target.value) })
+                    }
+                    className="w-full bg-background border border-input px-2.5 py-1 text-xs text-foreground outline-none focus:border-primary"
+                  >
+                    <option value={15}>Every 15 min</option>
+                    <option value={30}>Every 30 min</option>
+                    <option value={60}>Every 1 hour</option>
+                    <option value={360}>Every 6 hours</option>
+                  </select>
+                </div>
+              )}
+            </div>
+
             {/* Token */}
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                  GitHub Personal Access Token (PAT) *
+                  Personal Access Token (PAT)
                 </label>
                 <a
                   href="https://github.com/settings/tokens?type=beta"
@@ -173,7 +383,7 @@ export function SettingsModal({
                   rel="noreferrer"
                   className="text-[11px] text-primary hover:underline flex items-center gap-1 font-bold"
                 >
-                  Create Token <ExternalLink className="w-3 h-3" />
+                  Generate Token <ExternalLink className="w-3 h-3" />
                 </a>
               </div>
               <div className="flex gap-2">
@@ -183,7 +393,6 @@ export function SettingsModal({
                   onChange={(e) => setFormData({ ...formData, token: e.target.value })}
                   placeholder="github_pat_..."
                   icon={<Key className="w-4 h-4" />}
-                  required
                 />
                 <Button
                   type="button"
@@ -197,63 +406,41 @@ export function SettingsModal({
               </div>
             </div>
 
-            {/* Owner & Repo Grid */}
+            {/* Owner & Repo */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1">
-                  GitHub Username / Owner *
+                  GitHub Username / Owner
                 </label>
                 <Input
                   value={formData.owner}
                   onChange={(e) => setFormData({ ...formData, owner: e.target.value })}
                   placeholder="e.g. Noob31Gen"
-                  required
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1">
-                  Repository Name *
+                  Repository Name
                 </label>
                 <Input
                   value={formData.repo}
                   onChange={(e) => setFormData({ ...formData, repo: e.target.value })}
                   placeholder="e.g. bookmark-vault"
-                  required
                 />
               </div>
             </div>
 
             {/* Branch */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1">
-                  Branch
-                </label>
-                <Input
-                  value={formData.branch}
-                  onChange={(e) => setFormData({ ...formData, branch: e.target.value })}
-                  placeholder="main"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1">
-                  Auto-Sync Interval
-                </label>
-                <select
-                  value={formData.syncIntervalMinutes}
-                  onChange={(e) =>
-                    setFormData({ ...formData, syncIntervalMinutes: Number(e.target.value) })
-                  }
-                  className="w-full bg-background border border-input px-3.5 py-2 text-sm text-foreground transition-colors outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-                >
-                  <option value={15}>Every 15 minutes</option>
-                  <option value={30}>Every 30 minutes</option>
-                  <option value={60}>Every 1 hour</option>
-                  <option value={360}>Every 6 hours</option>
-                </select>
-              </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1">
+                Branch
+              </label>
+              <Input
+                value={formData.branch}
+                onChange={(e) => setFormData({ ...formData, branch: e.target.value })}
+                placeholder="main"
+              />
             </div>
 
             {/* Test result feedback */}
@@ -281,9 +468,9 @@ export function SettingsModal({
               </div>
             )}
 
-            {/* Action buttons */}
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
-              <div className="flex gap-2">
+            {/* Manual Sync Actions */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <div className="flex flex-wrap gap-2">
                 <Button
                   type="button"
                   variant="outline"
@@ -302,9 +489,10 @@ export function SettingsModal({
                   onClick={handleManualPush}
                   disabled={isSyncing || !formData.token}
                   className="gap-1.5"
+                  title="Upload all local bookmarks and screenshots to GitHub"
                 >
                   <Upload className="w-3.5 h-3.5" />
-                  {isSyncing ? "Pushing..." : "Push Local to GitHub"}
+                  {isSyncing ? "Pushing..." : "Manual Push to GitHub"}
                 </Button>
 
                 <Button
@@ -314,20 +502,17 @@ export function SettingsModal({
                   onClick={handleManualPull}
                   disabled={isPulling || !formData.token}
                   className="gap-1.5"
+                  title="Download and restore bookmarks from GitHub"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  {isPulling ? "Pulling..." : "Pull from GitHub"}
+                  {isPulling ? "Pulling..." : "Manual Pull from GitHub"}
                 </Button>
               </div>
-
-              <Button type="submit" variant="default" size="sm" className="font-bold">
-                Save Settings
-              </Button>
             </div>
-          </form>
+          </div>
         </section>
 
-        {/* Local Backup & Data Portability */}
+        {/* Data Portability */}
         <section className="space-y-4">
           <div className="border-b border-border pb-2">
             <h3 className="text-sm font-extrabold uppercase tracking-wider text-foreground flex items-center gap-2">
@@ -337,6 +522,7 @@ export function SettingsModal({
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Button
+              type="button"
               variant="outline"
               size="sm"
               onClick={handleExportJSON}
@@ -348,6 +534,7 @@ export function SettingsModal({
             </Button>
 
             <Button
+              type="button"
               variant="outline"
               size="sm"
               onClick={handleExportHTML}
@@ -355,7 +542,7 @@ export function SettingsModal({
             >
               <Download className="w-4 h-4 text-primary" />
               <span className="font-bold text-xs">Export HTML Bookmarks</span>
-              <span className="text-[10px] text-muted-foreground font-normal">Standard Netscape format</span>
+              <span className="text-[10px] text-muted-foreground font-normal">Netscape standard</span>
             </Button>
 
             <label className="pop-3d border border-border bg-background hover:bg-muted p-3 flex flex-col items-center justify-center gap-1 cursor-pointer text-center">
@@ -371,7 +558,17 @@ export function SettingsModal({
             </label>
           </div>
         </section>
-      </div>
+
+        {/* Save Footer */}
+        <div className="flex items-center justify-end gap-2 pt-4 border-t border-border">
+          <Button type="button" variant="outline" onClick={onClose}>
+            Close
+          </Button>
+          <Button type="submit" variant="default" className="font-bold">
+            Save All Preferences
+          </Button>
+        </div>
+      </form>
     </Modal>
   );
 }

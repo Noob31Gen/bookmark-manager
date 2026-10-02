@@ -102,6 +102,12 @@ function transformNode(
     isFavorite: meta.isFavorite || false,
     readerContent: meta.readerContent,
     lastCaptured: meta.lastCaptured,
+    httpStatus: meta.httpStatus,
+    httpStatusText: meta.httpStatusText,
+    finalUrl: meta.finalUrl,
+    isRedirect: meta.isRedirect,
+    lastChecked: meta.lastChecked,
+    fetchedImages: meta.fetchedImages,
   };
 }
 
@@ -262,6 +268,12 @@ export async function updateBookmark(
     favicon?: string;
     isFavorite?: boolean;
     readerContent?: string;
+    httpStatus?: number;
+    httpStatusText?: string;
+    finalUrl?: string;
+    isRedirect?: boolean;
+    lastChecked?: number;
+    fetchedImages?: string[];
   }
 ): Promise<void> {
   const { title, url, ...metaUpdates } = params;
@@ -279,10 +291,9 @@ export async function updateBookmark(
 
 export async function deleteBookmark(id: string): Promise<void> {
   if (isChromeExtension) {
-    await new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve) => {
       chrome.bookmarks.remove(id, () => {
         if (chrome.runtime.lastError) {
-          // If it's a non-empty folder, remove tree
           chrome.bookmarks.removeTree(id, () => resolve());
         } else {
           resolve();
@@ -290,8 +301,13 @@ export async function deleteBookmark(id: string): Promise<void> {
       });
     });
   }
-
   await deleteBookmarkMetadata(id);
+}
+
+export async function deleteMultipleBookmarks(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    await deleteBookmark(id);
+  }
 }
 
 export async function createFolder(title: string, parentId: string = "1"): Promise<string> {
@@ -309,6 +325,54 @@ export async function moveBookmark(id: string, parentId: string, index?: number)
     await new Promise<void>((resolve) => {
       chrome.bookmarks.move(id, { parentId, index }, () => resolve());
     });
+  }
+}
+
+export async function moveMultipleBookmarks(ids: string[], parentId: string): Promise<void> {
+  for (const id of ids) {
+    await moveBookmark(id, parentId);
+  }
+}
+
+export async function copyMultipleBookmarks(
+  bookmarks: EnhancedBookmark[],
+  destinationParentId: string
+): Promise<void> {
+  for (const b of bookmarks) {
+    if (b.url) {
+      await createBookmark({
+        parentId: destinationParentId,
+        title: `${b.title} (Copy)`,
+        url: b.url,
+        tags: b.tags,
+        description: b.description,
+        notes: b.notes,
+        screenshot: b.screenshot,
+        ogImage: b.ogImage,
+        favicon: b.favicon,
+        isFavorite: b.isFavorite,
+      });
+    }
+  }
+}
+
+export async function deleteMultipleFolders(folderIds: string[]): Promise<void> {
+  for (const id of folderIds) {
+    if (isChromeExtension) {
+      await new Promise<void>((resolve) => {
+        chrome.bookmarks.removeTree(id, () => resolve());
+      });
+    }
+  }
+}
+
+export async function moveMultipleFolders(folderIds: string[], destinationParentId: string): Promise<void> {
+  for (const id of folderIds) {
+    if (isChromeExtension) {
+      await new Promise<void>((resolve) => {
+        chrome.bookmarks.move(id, { parentId: destinationParentId }, () => resolve());
+      });
+    }
   }
 }
 

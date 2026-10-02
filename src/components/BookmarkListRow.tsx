@@ -6,31 +6,42 @@ import {
   Check,
   Edit2,
   Trash2,
-  BookOpen,
+  CheckSquare,
+  Square,
+  Compass,
+  ArrowUpRight,
 } from "lucide-react";
-import { EnhancedBookmark } from "../lib/types";
+import { EnhancedBookmark, ClickAction } from "../lib/types";
 import { getDomain, getFaviconUrl, formatDate } from "../lib/utils";
+import { HttpStatusBadge } from "./HttpStatusBadge";
 
 interface BookmarkListRowProps {
   bookmark: EnhancedBookmark;
+  isSelected: boolean;
+  onToggleSelect: (id: string) => void;
   onEdit: (bookmark: EnhancedBookmark) => void;
   onDelete: (id: string) => void;
   onToggleFavorite: (id: string, isFavorite: boolean) => void;
-  onOpenReader: (bookmark: EnhancedBookmark) => void;
+  onOpenBrowse: (bookmark: EnhancedBookmark) => void;
   onSelectTag: (tag: string) => void;
+  clickAction?: ClickAction;
 }
 
 export function BookmarkListRow({
   bookmark,
+  isSelected,
+  onToggleSelect,
   onEdit,
   onDelete,
   onToggleFavorite,
-  onOpenReader,
+  onOpenBrowse,
   onSelectTag,
+  clickAction = "browse_mode",
 }: BookmarkListRowProps) {
   const [copied, setCopied] = useState(false);
   const domain = getDomain(bookmark.url);
   const favicon = bookmark.favicon || getFaviconUrl(bookmark.url);
+  const isRedirected = bookmark.isRedirect || (!!bookmark.finalUrl && bookmark.finalUrl !== bookmark.url);
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -41,10 +52,39 @@ export function BookmarkListRow({
     }
   };
 
+  const handleTitleClick = (e: React.MouseEvent) => {
+    if (clickAction === "browse_mode") {
+      e.preventDefault();
+      onOpenBrowse(bookmark);
+    }
+  };
+
   return (
-    <div className="pop-3d group flex items-center justify-between p-3 border border-border bg-card hover:bg-muted/40 transition-colors gap-4">
-      {/* Favicon & Title */}
+    <div
+      className={`pop-3d group flex items-center justify-between p-3 border transition-colors gap-4 ${
+        isSelected
+          ? "border-primary bg-primary/10 ring-1 ring-primary"
+          : "border-border bg-card hover:bg-muted/40"
+      }`}
+    >
+      {/* Selector & Favicon & Title */}
       <div className="flex items-center gap-3 flex-1 min-w-0">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSelect(bookmark.id);
+          }}
+          className="p-1 hover:text-primary text-muted-foreground cursor-pointer flex-shrink-0"
+          title={isSelected ? "Deselect" : "Select"}
+        >
+          {isSelected ? (
+            <CheckSquare className="w-4 h-4 text-primary" />
+          ) : (
+            <Square className="w-4 h-4 text-muted-foreground opacity-60 group-hover:opacity-100" />
+          )}
+        </button>
+
         <button
           onClick={() => onToggleFavorite(bookmark.id, !bookmark.isFavorite)}
           className="p-1 text-muted-foreground hover:text-amber-400 transition-colors flex-shrink-0"
@@ -70,9 +110,10 @@ export function BookmarkListRow({
         <div className="flex flex-col min-w-0 flex-1">
           <a
             href={bookmark.url}
-            target="_blank"
+            onClick={handleTitleClick}
+            target={clickAction === "open_link" ? "_blank" : undefined}
             rel="noreferrer"
-            className="font-bold text-sm text-foreground hover:text-primary transition-colors truncate"
+            className="font-bold text-sm text-foreground hover:text-primary transition-colors truncate cursor-pointer"
             title={bookmark.title}
           >
             {bookmark.title}
@@ -81,6 +122,25 @@ export function BookmarkListRow({
             {domain}
           </span>
         </div>
+      </div>
+
+      {/* Redirect Indicator */}
+      {isRedirected && (
+        <span
+          className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono font-bold bg-amber-500/20 text-amber-500 border border-amber-500/40 select-none flex-shrink-0"
+          title={`Redirected to: ${bookmark.finalUrl || "different location"}`}
+        >
+          <ArrowUpRight className="w-3 h-3" />
+          <span>Redirect</span>
+        </span>
+      )}
+
+      {/* HTTP Status Code Badge */}
+      <div className="flex-shrink-0">
+        <HttpStatusBadge
+          status={bookmark.httpStatus}
+          statusText={bookmark.httpStatusText}
+        />
       </div>
 
       {/* Tags */}
@@ -103,15 +163,14 @@ export function BookmarkListRow({
 
       {/* Actions */}
       <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
-        {bookmark.readerContent && (
-          <button
-            onClick={() => onOpenReader(bookmark)}
-            className="p-1.5 hover:text-primary text-muted-foreground"
-            title="Read article"
-          >
-            <BookOpen className="w-3.5 h-3.5" />
-          </button>
-        )}
+        {/* Browse Mode Button */}
+        <button
+          onClick={() => onOpenBrowse(bookmark)}
+          className="p-1.5 hover:text-primary text-muted-foreground"
+          title="Open Browse Mode (Expanded View)"
+        >
+          <Compass className="w-3.5 h-3.5 text-primary" />
+        </button>
 
         <button
           onClick={handleCopy}

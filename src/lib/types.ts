@@ -1,3 +1,16 @@
+export type FetchScope = "all" | "embeds_only" | "screenshots_only";
+export type ClickAction = "open_link" | "browse_mode";
+export type MainViewThumbnail = "auto" | "screenshot_only" | "embed_only" | "icon_only" | "none";
+
+export type SortField =
+  | "date-desc"
+  | "date-asc"
+  | "title-asc"
+  | "title-desc"
+  | "domain-asc"
+  | "http-status"
+  | "starred-first";
+
 export interface BookmarkMetadata {
   tags?: string[];
   description?: string;
@@ -9,6 +22,18 @@ export interface BookmarkMetadata {
   readerContent?: string;
   lastCaptured?: number;
   githubSha?: string;
+  
+  // HTTP status & diagnostics
+  httpStatus?: number; // 200, 301, 404, 500, etc.
+  httpStatusText?: string; // "OK", "Not Found", "Server Error", "Network Timeout"
+  lastChecked?: number;
+
+  // Redirect detection
+  finalUrl?: string; // Target URL if redirected
+  isRedirect?: boolean;
+  
+  // Extra page assets
+  fetchedImages?: string[];
 }
 
 export interface EnhancedBookmark {
@@ -32,6 +57,24 @@ export interface EnhancedBookmark {
   isFavorite?: boolean;
   readerContent?: string;
   lastCaptured?: number;
+  httpStatus?: number;
+  httpStatusText?: string;
+  lastChecked?: number;
+
+  // Redirects & extra assets
+  finalUrl?: string;
+  isRedirect?: boolean;
+  fetchedImages?: string[];
+}
+
+export interface UserPreferences {
+  fetchScope: FetchScope;
+  skip200OnRefetch: boolean;
+  clickAction: ClickAction;
+  mainViewThumbnail: MainViewThumbnail;
+  defaultSort: SortField;
+  viewMode: ViewMode;
+  concurrencyLimit: number;
 }
 
 export interface GitHubConfig {
@@ -60,10 +103,26 @@ export type ViewMode = "grid" | "cards" | "list";
 export interface ExtractedPageData {
   title: string;
   url: string;
+  finalUrl?: string;
+  isRedirect?: boolean;
   description: string;
   ogImage?: string;
   favicon?: string;
   suggestedTags: string[];
   readerText?: string;
   screenshot?: string;
+  httpStatus?: number;
+  httpStatusText?: string;
+  fetchedImages?: string[];
+}
+
+export interface BatchFetchProgress {
+  isRunning: boolean;
+  total: number;
+  current: number;
+  currentTitle: string;
+  currentUrl: string;
+  successCount: number;
+  errorCount: number;
+  skippedCount: number;
 }

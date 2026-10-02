@@ -1,8 +1,20 @@
-import { BookmarkMetadata, GitHubConfig } from "./types";
+import { BookmarkMetadata, GitHubConfig, UserPreferences } from "./types";
 
 const METADATA_KEY = "noob31_bookmark_metadata";
 const GITHUB_CONFIG_KEY = "noob31_github_config";
+const PREFERENCES_KEY = "noob31_user_preferences";
 const THEME_KEY = "noob31_theme";
+
+// Default User Preferences
+export const DEFAULT_USER_PREFERENCES: UserPreferences = {
+  fetchScope: "all",
+  skip200OnRefetch: true,
+  clickAction: "browse_mode",
+  mainViewThumbnail: "auto",
+  defaultSort: "date-desc",
+  viewMode: "cards",
+  concurrencyLimit: 4,
+};
 
 // Default GitHub Configuration
 export const DEFAULT_GITHUB_CONFIG: GitHubConfig = {
@@ -11,7 +23,7 @@ export const DEFAULT_GITHUB_CONFIG: GitHubConfig = {
   owner: "",
   repo: "",
   branch: "main",
-  autoSync: true,
+  autoSync: false,
   syncIntervalMinutes: 30,
   syncStatus: "idle",
 };
@@ -87,6 +99,14 @@ export async function deleteBookmarkMetadata(id: string): Promise<void> {
   }
 }
 
+export async function deleteMultipleBookmarkMetadata(ids: string[]): Promise<void> {
+  const all = await getAllMetadata();
+  for (const id of ids) {
+    if (all[id]) delete all[id];
+  }
+  await setStorageItem(METADATA_KEY, all);
+}
+
 export async function bulkUpdateMetadata(
   updates: Record<string, Partial<BookmarkMetadata>>
 ): Promise<void> {
@@ -98,6 +118,24 @@ export async function bulkUpdateMetadata(
     };
   }
   await setStorageItem(METADATA_KEY, all);
+}
+
+// --- User Preferences Operations ---
+export async function getUserPreferences(): Promise<UserPreferences> {
+  const saved = await getStorageItem<Partial<UserPreferences>>(PREFERENCES_KEY, {});
+  return {
+    ...DEFAULT_USER_PREFERENCES,
+    ...saved,
+  };
+}
+
+export async function saveUserPreferences(
+  prefs: Partial<UserPreferences>
+): Promise<UserPreferences> {
+  const current = await getUserPreferences();
+  const updated = { ...current, ...prefs };
+  await setStorageItem(PREFERENCES_KEY, updated);
+  return updated;
 }
 
 // --- GitHub Config Operations ---
