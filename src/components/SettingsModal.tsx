@@ -145,7 +145,7 @@ export function SettingsModal({
     setTestResult(null);
     try {
       await saveGitHubConfig(cleanConfig);
-      const res = await syncVaultToGitHub(cleanConfig);
+      const res = await syncVaultToGitHub(cleanConfig, (progress) => setSyncFeedback(progress.message));
       setSyncFeedback(res.message);
       setTestResult({
         ok: res.success,

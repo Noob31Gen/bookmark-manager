@@ -30,18 +30,14 @@ export function GitHubSyncStatus({
     setIsSyncing(true);
     setFeedback(null);
     try {
-      const result = await syncVaultToGitHub(config);
-      if (result.success) {
-        setFeedback("Synced!");
-      } else {
-        setFeedback(result.message);
-      }
+      const result = await syncVaultToGitHub(config, (progress) => setFeedback(progress.message));
+      setFeedback(result.message);
       onConfigChange();
     } catch (err: any) {
       setFeedback(err.message || "Sync failed");
     } finally {
       setIsSyncing(false);
-      setTimeout(() => setFeedback(null), 4000);
+      setTimeout(() => setFeedback(null), 8000);
     }
   };
 
@@ -90,7 +86,10 @@ export function GitHubSyncStatus({
       </Button>
 
       {feedback && (
-        <span className={`text-xs font-semibold max-w-[200px] truncate animate-in fade-in ${isError ? "text-destructive" : "text-primary"}`}>
+        <span
+          title={feedback}
+          className={`text-xs font-semibold max-w-[260px] truncate animate-in fade-in ${isError ? "text-destructive" : "text-primary"}`}
+        >
           {feedback}
         </span>
       )}
