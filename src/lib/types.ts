@@ -11,6 +11,15 @@ export type SortField =
   | "http-status"
   | "starred-first";
 
+// Summary of heavy page archive (full-page screenshot + MHTML) stored in IndexedDB
+export interface ArchiveSummary {
+  capturedAt: number;
+  fullPageBytes?: number;
+  fullPageWidth?: number;
+  fullPageHeight?: number;
+  mhtmlBytes?: number;
+}
+
 export interface BookmarkMetadata {
   tags?: string[];
   description?: string;
@@ -35,6 +44,7 @@ export interface BookmarkMetadata {
   
   // Extra page assets
   fetchedImages?: string[];
+  archive?: ArchiveSummary;
 }
 
 export interface EnhancedBookmark {
@@ -68,6 +78,7 @@ export interface EnhancedBookmark {
   finalUrl?: string;
   isRedirect?: boolean;
   fetchedImages?: string[];
+  archive?: ArchiveSummary;
 }
 
 export interface UserPreferences {

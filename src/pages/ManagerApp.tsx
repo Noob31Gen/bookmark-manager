@@ -959,6 +959,7 @@ export function ManagerApp() {
           setEditModalOpen(true);
         }}
         onRefetchSingle={handleRefetchSingle}
+        onCaptureArchive={handleCaptureScreenshot}
       />
 
       {/* Settings Modal */}

@@ -1,4 +1,5 @@
 import { BookmarkMetadata, GitHubConfig, UserPreferences } from "./types";
+import { deleteArchives } from "./archiveStore";
 
 const METADATA_KEY = "noob31_bookmark_metadata";
 const GITHUB_CONFIG_KEY = "noob31_github_config";
@@ -94,6 +95,7 @@ export async function saveBookmarkMetadata(
 }
 
 export async function deleteBookmarkMetadata(id: string): Promise<void> {
+  await deleteArchives([id]);
   const all = await getAllMetadata();
   if (all[id]) {
     delete all[id];
@@ -102,6 +104,7 @@ export async function deleteBookmarkMetadata(id: string): Promise<void> {
 }
 
 export async function deleteMultipleBookmarkMetadata(ids: string[]): Promise<void> {
+  await deleteArchives(ids);
   const all = await getAllMetadata();
   for (const id of ids) {
     if (all[id]) delete all[id];

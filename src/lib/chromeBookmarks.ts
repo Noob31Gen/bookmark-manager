@@ -110,6 +110,7 @@ function transformNode(
     isRedirect: meta.isRedirect,
     lastChecked: meta.lastChecked,
     fetchedImages: meta.fetchedImages,
+    archive: meta.archive,
   };
 }
 

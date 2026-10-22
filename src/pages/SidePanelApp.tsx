@@ -23,7 +23,7 @@ import {
   updateBookmark,
   subscribeToBookmarkChanges,
 } from "../lib/chromeBookmarks";
-import { extractActiveTabDetails, captureActiveTabScreenshot } from "../lib/capture";
+import { extractActiveTabDetails, captureActiveTabScreenshot, captureBookmarkUrlScreenshot, commitPendingArchive } from "../lib/capture";
 import { fetchLivePageDetails } from "../lib/fetcher";
 import { getDomain, getFaviconUrl } from "../lib/utils";
 import { Button } from "../components/ui/Button";
@@ -153,7 +153,7 @@ export function SidePanelApp() {
       const tabData = await extractActiveTabDetails();
       const screenshot = await captureActiveTabScreenshot();
       if (tabData && tabData.url) {
-        await createBookmark({
+        const created = await createBookmark({
           title: tabData.title,
           url: tabData.url,
           tags: tabData.suggestedTags,
@@ -161,6 +161,7 @@ export function SidePanelApp() {
           screenshot,
           favicon: tabData.favicon,
         });
+        if (screenshot && created?.id) await commitPendingArchive(created.id, tabData.url);
         refreshData();
       }
     } catch (err) {
@@ -479,6 +480,7 @@ export function SidePanelApp() {
           setEditModalOpen(true);
         }}
         onRefetchSingle={handleRefetchSingle}
+        onCaptureArchive={async (b) => { if (b.url) { await captureBookmarkUrlScreenshot(b.url, b.id); refreshData(); } }}
       />
 
       {/* Edit Modal */}

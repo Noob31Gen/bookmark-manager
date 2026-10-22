@@ -20,7 +20,7 @@ import {
   updateBookmark,
   deleteBookmark,
 } from "../lib/chromeBookmarks";
-import { extractActiveTabDetails, captureActiveTabScreenshot } from "../lib/capture";
+import { extractActiveTabDetails, captureActiveTabScreenshot, commitPendingArchive } from "../lib/capture";
 import { normalizeTag, getDomain } from "../lib/utils";
 import { Button } from "../components/ui/Button";
 import { Input, Textarea } from "../components/ui/Input";
@@ -122,8 +122,9 @@ export function PopupApp() {
         screenshot,
         description: activeTabInfo.description,
       });
+      if (screenshot) await commitPendingArchive(existingBookmark.id, activeTabInfo.url);
     } else {
-      await createBookmark({
+      const created = await createBookmark({
         parentId: selectedFolderId,
         title,
         url: activeTabInfo.url,
@@ -134,6 +135,7 @@ export function PopupApp() {
         ogImage: activeTabInfo.ogImage,
         favicon: activeTabInfo.favicon,
       });
+      if (screenshot && created?.id) await commitPendingArchive(created.id, activeTabInfo.url);
     }
 
     setIsSaved(true);

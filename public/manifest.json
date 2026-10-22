@@ -37,7 +37,9 @@
     "scripting",
     "sidePanel",
     "contextMenus",
-    "alarms"
+    "alarms",
+    "debugger",
+    "pageCapture"
   ],
   "host_permissions": [
     "<all_urls>"

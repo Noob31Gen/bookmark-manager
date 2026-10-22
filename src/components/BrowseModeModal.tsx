@@ -15,13 +15,17 @@ import {
   Calendar,
   Edit2,
   RefreshCw,
+  FileArchive,
+  Maximize2,
 } from "lucide-react";
 import { EnhancedBookmark } from "../lib/types";
 import { Modal } from "./ui/Modal";
 import { Button } from "./ui/Button";
 import { Badge } from "./ui/Badge";
 import { HttpStatusBadge } from "./HttpStatusBadge";
+import { ArchiveViewerModal, ArchiveViewerTab } from "./ArchiveViewerModal";
 import { formatDate, getDomain } from "../lib/utils";
+import { formatBytes } from "../lib/archiveStore";
 
 interface BrowseModeModalProps {
   isOpen: boolean;
@@ -29,6 +33,7 @@ interface BrowseModeModalProps {
   bookmark: EnhancedBookmark | null;
   onEdit: (bookmark: EnhancedBookmark) => void;
   onRefetchSingle: (bookmark: EnhancedBookmark) => Promise<void>;
+  onCaptureArchive?: (bookmark: EnhancedBookmark) => Promise<void>;
 }
 
 export function BrowseModeModal({
@@ -37,11 +42,14 @@ export function BrowseModeModal({
   bookmark,
   onEdit,
   onRefetchSingle,
+  onCaptureArchive,
 }: BrowseModeModalProps) {
   const [copied, setCopied] = useState(false);
   const [copiedRedirect, setCopiedRedirect] = useState(false);
   const [activeMediaTab, setActiveMediaTab] = useState<"all" | "screenshot" | "embed" | "page_images">("all");
   const [isRefetching, setIsRefetching] = useState(false);
+  const [viewerTab, setViewerTab] = useState<ArchiveViewerTab | null>(null);
+  const [isCapturing, setIsCapturing] = useState(false);
 
   if (!bookmark) return null;
 
@@ -69,7 +77,20 @@ export function BrowseModeModal({
     }
   };
 
+  const handleCaptureArchive = async () => {
+    if (!onCaptureArchive) return;
+    setIsCapturing(true);
+    try {
+      await onCaptureArchive(bookmark);
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
+  const archive = bookmark.archive;
+
   return (
+    <>
     <Modal
       isOpen={isOpen}
       onClose={onClose}
@@ -221,6 +242,64 @@ export function BrowseModeModal({
           </div>
         </div>
 
+        {/* Page Archive (Full-page screenshot + MHTML) */}
+        <div className="border border-border bg-card p-3.5 sm:p-5 space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h3 className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-foreground flex items-center gap-2">
+              <FileArchive className="w-4 h-4 text-primary" /> Page Archive
+            </h3>
+            <span className="text-[10px] font-mono text-muted-foreground">
+              {archive ? `Captured ${formatDate(archive.capturedAt)}` : "Not archived yet"}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <button
+              id="browse-view-fullpage"
+              onClick={() => setViewerTab("screenshot")}
+              disabled={!archive?.fullPageBytes && !bookmark.screenshot}
+              className="pop-3d group flex items-center gap-2.5 p-3 border border-border bg-background hover:border-primary text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Camera className="w-5 h-5 text-primary flex-shrink-0 group-hover:scale-110 transition-transform" />
+              <div className="min-w-0">
+                <div className="text-xs font-bold uppercase">View Full Page</div>
+                <div className="text-[10px] font-mono text-muted-foreground truncate">
+                  {archive?.fullPageBytes
+                    ? `${archive.fullPageWidth}×${archive.fullPageHeight} • ${formatBytes(archive.fullPageBytes)}`
+                    : bookmark.screenshot ? "Thumbnail only" : "Unavailable"}
+                </div>
+              </div>
+            </button>
+            <button
+              id="browse-view-mhtml"
+              onClick={() => setViewerTab("mhtml")}
+              disabled={!archive?.mhtmlBytes}
+              className="pop-3d group flex items-center gap-2.5 p-3 border border-border bg-background hover:border-primary text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <FileText className="w-5 h-5 text-primary flex-shrink-0 group-hover:scale-110 transition-transform" />
+              <div className="min-w-0">
+                <div className="text-xs font-bold uppercase">View Web Archive</div>
+                <div className="text-[10px] font-mono text-muted-foreground truncate">
+                  {archive?.mhtmlBytes ? `MHTML • ${formatBytes(archive.mhtmlBytes)}` : "Unavailable"}
+                </div>
+              </div>
+            </button>
+            {onCaptureArchive && (
+              <button
+                id="browse-capture-archive"
+                onClick={handleCaptureArchive}
+                disabled={isCapturing}
+                className="pop-3d group flex items-center gap-2.5 p-3 border border-primary bg-primary text-primary-foreground text-left disabled:opacity-60"
+              >
+                <RefreshCw className={`w-5 h-5 flex-shrink-0 ${isCapturing ? "animate-spin" : ""}`} />
+                <div className="min-w-0">
+                  <div className="text-xs font-bold uppercase">{isCapturing ? "Capturing..." : archive ? "Recapture" : "Capture Archive"}</div>
+                  <div className="text-[10px] font-mono opacity-80 truncate">Full page + MHTML</div>
+                </div>
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* Media & Visual Assets Section */}
         <div className="border border-border bg-card p-3.5 sm:p-5 space-y-4">
           <div className="flex items-center justify-between border-b border-border pb-2 flex-wrap gap-2">
@@ -278,18 +357,21 @@ export function BrowseModeModal({
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs font-bold uppercase text-muted-foreground">
                   <span className="flex items-center gap-1">
-                    <Camera className="w-3.5 h-3.5 text-primary" /> Viewport Screenshot
+                    <Camera className="w-3.5 h-3.5 text-primary" /> Screenshot
                   </span>
-                  <a href={bookmark.screenshot} target="_blank" rel="noreferrer" className="text-primary hover:underline font-mono text-[10px]">
-                    Full Image
-                  </a>
+                  <button
+                    onClick={() => setViewerTab("screenshot")}
+                    className="text-primary hover:underline font-mono text-[10px] inline-flex items-center gap-1"
+                  >
+                    <Maximize2 className="w-3 h-3" /> {archive?.fullPageBytes ? "Full Page" : "Expand"}
+                  </button>
                 </div>
                 <div className="w-full aspect-video bg-muted border border-border overflow-hidden group">
                   <img
                     src={bookmark.screenshot}
                     alt="Viewport snapshot"
-                    className="w-full h-full object-cover object-top hover:scale-105 transition-transform duration-300 cursor-pointer"
-                    onClick={() => window.open(bookmark.screenshot, "_blank")}
+                    className="w-full h-full object-cover object-top hover:scale-105 transition-transform duration-300 cursor-zoom-in"
+                    onClick={() => setViewerTab("screenshot")}
                   />
                 </div>
               </div>
@@ -369,5 +451,13 @@ export function BrowseModeModal({
         )}
       </div>
     </Modal>
+    <ArchiveViewerModal
+      isOpen={viewerTab !== null}
+      onClose={() => setViewerTab(null)}
+      bookmark={bookmark}
+      initialTab={viewerTab || "screenshot"}
+      onRecapture={onCaptureArchive}
+    />
+    </>
   );
 }
