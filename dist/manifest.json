@@ -38,7 +38,6 @@
     "sidePanel",
     "contextMenus",
     "alarms",
-    "debugger",
     "pageCapture"
   ],
   "host_permissions": [

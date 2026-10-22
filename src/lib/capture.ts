@@ -137,14 +137,16 @@ async function primeLazyContent(tabId: number): Promise<number | undefined> {
   return execInTab<number>(tabId, async () => {
     const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
     const start = window.scrollY;
-    const step = Math.max(300, Math.floor(window.innerHeight * 0.85));
-    const maxH = Math.min(document.documentElement.scrollHeight, 30000);
+    const bodyH = document.body?.scrollHeight || 0;
+    const docH = document.documentElement?.scrollHeight || 0;
+    const maxH = Math.min(Math.max(bodyH, docH), 30000);
+    const step = Math.max(350, Math.floor(window.innerHeight * 0.85));
     for (let y = 0; y < maxH; y += step) {
       window.scrollTo({ top: y, behavior: "instant" as ScrollBehavior });
-      await wait(80);
+      await wait(60);
     }
     window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
-    await wait(350);
+    await wait(300);
     return start;
   });
 }
@@ -153,154 +155,245 @@ async function scrollTabTo(tabId: number, top: number) {
   await execInTab(tabId, (y: number) => window.scrollTo({ top: y, behavior: "instant" as ScrollBehavior }), [top]);
 }
 
-// Full-page capture via Chrome DevTools Protocol (renders beyond viewport, high DPI, no scrolling artifacts)
-async function captureFullPageViaDebugger(tabId: number): Promise<FullPageImage | undefined> {
-  if (!chrome.debugger?.attach) return undefined;
-  const target = { tabId };
-  const send = <T = any>(method: string, params?: object) =>
-    new Promise<T>((resolve, reject) => {
-      chrome.debugger.sendCommand(target, method, params, (res) => {
-        const e = chrome.runtime.lastError;
-        if (e) reject(new Error(e.message));
-        else resolve(res as T);
-      });
-    });
-
-  try {
-    await new Promise<void>((resolve, reject) =>
-      chrome.debugger.attach(target, "1.3", () => {
-        const e = chrome.runtime.lastError;
-        if (e) reject(new Error(e.message));
-        else resolve();
-      })
-    );
-  } catch (err) {
-    console.warn("Debugger attach failed, falling back to scroll capture:", err);
-    return undefined;
-  }
-
-  try {
-    const metrics: any = await send("Page.getLayoutMetrics");
-    const content = metrics.cssContentSize || metrics.contentSize;
-    const vp = metrics.cssLayoutViewport || metrics.layoutViewport;
-    const evalRes: any = await send("Runtime.evaluate", { expression: "window.devicePixelRatio", returnByValue: true });
-    const dpr = Number(evalRes?.result?.value) || 1;
-
-    const cssW = Math.max(1, Math.ceil(vp.clientWidth));
-    const fullH = Math.max(1, Math.ceil(content.height), Math.ceil(vp.clientHeight));
-
-    // Choose output scale within canvas limits; never below 1x
-    let scale = Math.min(Math.max(FULLPAGE_TARGET_SCALE, dpr), FULLPAGE_MAX_SCALE);
-    scale = Math.min(scale, MAX_CANVAS_DIM / cssW, MAX_CANVAS_DIM / fullH, Math.sqrt(MAX_CANVAS_AREA / (cssW * fullH)));
-    scale = Math.max(1, scale);
-    const cssH = Math.min(fullH, Math.floor(MAX_CANVAS_DIM / scale), Math.floor(MAX_CANVAS_AREA / (cssW * scale * scale)));
-
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(cssW * scale);
-    canvas.height = Math.round(cssH * scale);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return undefined;
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const chunkCss = Math.max(256, Math.floor(CDP_CHUNK_PX / scale));
-    for (let y = 0; y < cssH; y += chunkCss) {
-      const h = Math.min(chunkCss, cssH - y);
-      const shot = await send<{ data: string }>("Page.captureScreenshot", {
-        format: "png",
-        captureBeyondViewport: true,
-        fromSurface: true,
-        clip: { x: 0, y, width: cssW, height: h, scale: scale / dpr },
-      });
-      const img = await loadImage(`data:image/png;base64,${shot.data}`);
-      ctx.drawImage(img, 0, Math.round(y * scale), canvas.width, Math.round(h * scale));
-    }
-
-    const useWebp = canvas.width <= WEBP_MAX_DIM && canvas.height <= WEBP_MAX_DIM;
-    const blob = await canvasToBlob(canvas, useWebp ? "image/webp" : "image/jpeg", 0.92);
-    return blob ? { blob, width: canvas.width, height: canvas.height } : undefined;
-  } catch (err) {
-    console.warn("CDP full-page capture failed:", err);
-    return undefined;
-  } finally {
-    chrome.debugger.detach(target, () => void chrome.runtime.lastError);
-  }
+interface PageMetrics {
+  totalH: number;
+  totalW: number;
+  vh: number;
+  vw: number;
+  hasInternalScroll: boolean;
 }
 
-// Fallback: scroll + captureVisibleTab + stitch (used when debugger is unavailable, e.g. DevTools open)
-async function captureFullPageViaScrolling(tabId: number, windowId?: number): Promise<FullPageImage | undefined> {
-  const info = await execInTab<{ h: number; vh: number }>(tabId, () => ({
-    h: document.documentElement.scrollHeight,
-    vh: window.innerHeight,
-  }));
-  if (!info || !info.vh) return undefined;
+// Full-page capture via high-res scroll & stitch (handles any page, SPAs, HiDPI, no debugger banner, no GPU texture tiling bugs)
+async function captureFullPage(tabId: number, windowId?: number): Promise<FullPageImage | undefined> {
+  const metrics = await execInTab<PageMetrics>(tabId, () => {
+    const body = document.body;
+    const html = document.documentElement;
+
+    const vh = window.innerHeight || html?.clientHeight || 800;
+    const vw = window.innerWidth || html?.clientWidth || 1280;
+
+    let totalH = Math.max(
+      body ? body.scrollHeight : 0,
+      body ? body.offsetHeight : 0,
+      html ? html.clientHeight : 0,
+      html ? html.scrollHeight : 0,
+      html ? html.offsetHeight : 0
+    );
+
+    let totalW = Math.max(
+      body ? body.scrollWidth : 0,
+      body ? body.offsetWidth : 0,
+      html ? html.clientWidth : 0,
+      html ? html.scrollWidth : 0,
+      html ? html.offsetWidth : 0
+    );
+
+    // If totalH is only the viewport height, check if an internal container has the scroll (e.g. SPA apps)
+    let hasInternalScroll = false;
+    if (totalH <= vh + 30) {
+      const candidates = Array.from(
+        document.querySelectorAll<HTMLElement>("main, [role='main'], #root > div, #__next > div, body > div")
+      );
+      for (const el of candidates) {
+        if (el.scrollHeight > vh + 50) {
+          const style = window.getComputedStyle(el);
+          if (style.overflowY === "auto" || style.overflowY === "scroll") {
+            totalH = el.scrollHeight;
+            el.setAttribute("data-n31-scroll-container", "true");
+            hasInternalScroll = true;
+            break;
+          }
+        }
+      }
+    }
+
+    return { totalH, totalW, vh, vw, hasInternalScroll };
+  });
+
+  if (!metrics || !metrics.vh) return undefined;
 
   let canvas: HTMLCanvasElement | undefined;
   let ctx: CanvasRenderingContext2D | null = null;
-  let ratio = 1;
-  let cssH = info.h;
-  let lastCapture = 0;
-  let hidFixed = false;
+  let canvasW = 0;
+  let canvasH = 0;
+  let capturedCssY = 0;
+  let lastCaptureTime = 0;
 
   try {
-    for (let y = 0; y < cssH; y += info.vh) {
-      const actualY =
-        (await execInTab<number>(
-          tabId,
-          (top: number) => {
-            window.scrollTo({ top, behavior: "instant" as ScrollBehavior });
-            return window.scrollY;
-          },
-          [y]
-        )) ?? y;
+    // 1. Temporarily hide scrollbars so screenshots are clean without vertical bar lines
+    await execInTab(tabId, () => {
+      const existing = document.getElementById("n31-capture-scrollbar-hide");
+      if (existing) existing.remove();
+      const style = document.createElement("style");
+      style.id = "n31-capture-scrollbar-hide";
+      style.textContent = `
+        ::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
+        html, body { scrollbar-width: none !important; -ms-overflow-style: none !important; }
+      `;
+      (document.head || document.documentElement).appendChild(style);
+      window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+      const internal = document.querySelector<HTMLElement>("[data-n31-scroll-container]");
+      if (internal) internal.scrollTop = 0;
+    });
 
-      // Hide fixed/sticky headers after the first frame so they don't repeat down the page
-      if (y > 0 && !hidFixed) {
-        hidFixed = true;
-        await execInTab(tabId, () => {
-          document.querySelectorAll<HTMLElement>("body *").forEach((el) => {
-            const pos = getComputedStyle(el).position;
-            if (pos === "fixed" || pos === "sticky") {
-              el.setAttribute("data-n31-hidden", el.style.visibility || "");
-              el.style.setProperty("visibility", "hidden", "important");
-            }
-          });
-        });
+    await sleep(150);
+
+    // 2. Capture Frame 0 (top of the page with native headers intact)
+    const frame0Url = await captureVisibleTabPng(windowId);
+    lastCaptureTime = Date.now();
+    if (!frame0Url) return undefined;
+
+    const frame0Img = await loadImage(frame0Url);
+
+    // If the entire page fits within one screen, return frame 0 immediately
+    if (metrics.totalH <= metrics.vh) {
+      const c = document.createElement("canvas");
+      c.width = frame0Img.naturalWidth;
+      c.height = frame0Img.naturalHeight;
+      const cctx = c.getContext("2d");
+      if (!cctx) return undefined;
+      cctx.drawImage(frame0Img, 0, 0);
+      const useWebp = c.width <= WEBP_MAX_DIM && c.height <= WEBP_MAX_DIM;
+      const blob = await canvasToBlob(c, useWebp ? "image/webp" : "image/jpeg", 0.92);
+      return blob ? { blob, width: c.width, height: c.height } : undefined;
+    }
+
+    // 3. Multi-screen page: calculate display scale ratio and set up canvas
+    const ratio = frame0Img.naturalWidth / metrics.vw;
+    canvasW = frame0Img.naturalWidth;
+    canvasH = Math.round(metrics.totalH * ratio);
+
+    // Ensure within browser canvas safety limits
+    if (canvasH > MAX_CANVAS_DIM || canvasW * canvasH > MAX_CANVAS_AREA) {
+      const scaleDown = Math.min(
+        MAX_CANVAS_DIM / canvasH,
+        Math.sqrt(MAX_CANVAS_AREA / (canvasW * canvasH))
+      );
+      canvasW = Math.round(canvasW * scaleDown);
+      canvasH = Math.round(canvasH * scaleDown);
+    }
+
+    canvas = document.createElement("canvas");
+    canvas.width = canvasW;
+    canvas.height = canvasH;
+    ctx = canvas.getContext("2d");
+    if (!ctx) return undefined;
+    ctx.imageSmoothingQuality = "high";
+
+    // Draw Frame 0 at the top
+    const frame0DstH = Math.round((metrics.vh / metrics.totalH) * canvasH);
+    ctx.drawImage(frame0Img, 0, 0, canvasW, frame0DstH);
+    capturedCssY = metrics.vh;
+
+    // 4. Hide position:fixed and position:sticky elements so they don't repeat down subsequent frames
+    await execInTab(tabId, () => {
+      document.querySelectorAll<HTMLElement>("body *").forEach((el) => {
+        const pos = window.getComputedStyle(el).position;
+        if (pos === "fixed" || pos === "sticky") {
+          el.setAttribute("data-n31-hidden", el.style.visibility || "");
+          el.style.setProperty("visibility", "hidden", "important");
+        }
+      });
+    });
+
+    // 5. Scroll loop to capture subsequent slices
+    let iter = 0;
+    const maxIter = 50; // up to ~50 screens
+
+    while (capturedCssY < metrics.totalH && iter < maxIter) {
+      iter++;
+
+      const targetY = Math.min(capturedCssY, metrics.totalH - metrics.vh);
+      const actualY = await execInTab(
+        tabId,
+        (target: number) => {
+          window.scrollTo({ top: target, behavior: "instant" as ScrollBehavior });
+          const internal = document.querySelector<HTMLElement>("[data-n31-scroll-container]");
+          if (internal) internal.scrollTop = target;
+          return internal ? internal.scrollTop : window.scrollY;
+        },
+        [targetY]
+      );
+
+      // Rate limit: Chrome limits captureVisibleTab to max 2 calls per second
+      const elapsed = Date.now() - lastCaptureTime;
+      if (elapsed < 550) {
+        await sleep(550 - elapsed);
       }
 
-      // captureVisibleTab is rate limited (~2 calls/sec)
-      await sleep(Math.max(250, 600 - (Date.now() - lastCapture)));
       const dataUrl = await captureVisibleTabPng(windowId);
-      lastCapture = Date.now();
+      lastCaptureTime = Date.now();
       if (!dataUrl) break;
 
-      const img = await loadImage(dataUrl);
-      if (!canvas) {
-        ratio = img.naturalHeight / info.vh;
-        cssH = Math.min(info.h, Math.floor(MAX_CANVAS_DIM / ratio), Math.floor(MAX_CANVAS_AREA / (img.naturalWidth * ratio)));
-        canvas = document.createElement("canvas");
-        canvas.width = img.naturalWidth;
-        canvas.height = Math.round(cssH * ratio);
-        ctx = canvas.getContext("2d");
+      const frameImg = await loadImage(dataUrl);
+      const currentScrollY = typeof actualY === "number" ? actualY : targetY;
+      const frameBottomCssY = currentScrollY + metrics.vh;
+
+      if (frameBottomCssY <= capturedCssY) {
+        // Can't scroll further down
+        break;
       }
-      ctx?.drawImage(img, 0, Math.round(actualY * ratio));
-      if (actualY + info.vh >= cssH) break;
+
+      const newCssH = Math.min(frameBottomCssY - capturedCssY, metrics.vh);
+      if (newCssH <= 0) break;
+
+      // Extract only the newly revealed bottom strip of the frame
+      const srcY = Math.round(((metrics.vh - newCssH) / metrics.vh) * frameImg.naturalHeight);
+      const srcH = frameImg.naturalHeight - srcY;
+
+      // Destination position on master canvas
+      const dstY = Math.round((capturedCssY / metrics.totalH) * canvasH);
+      const dstH = Math.round((newCssH / metrics.totalH) * canvasH);
+
+      ctx.drawImage(
+        frameImg,
+        0, srcY, frameImg.naturalWidth, srcH,
+        0, dstY, canvasW, dstH
+      );
+
+      capturedCssY += newCssH;
+
+      if (currentScrollY + metrics.vh >= metrics.totalH - 2) {
+        break;
+      }
     }
   } finally {
-    if (hidFixed) {
+    // 6. Clean up: restore hidden fixed elements, remove temporary scrollbar style, restore original position
+    try {
       await execInTab(tabId, () => {
+        const s = document.getElementById("n31-capture-scrollbar-hide");
+        if (s) s.remove();
+
         document.querySelectorAll<HTMLElement>("[data-n31-hidden]").forEach((el) => {
           el.style.visibility = el.getAttribute("data-n31-hidden") || "";
           el.removeAttribute("data-n31-hidden");
         });
+
+        const internal = document.querySelector("[data-n31-scroll-container]");
+        if (internal) internal.removeAttribute("data-n31-scroll-container");
       });
+    } catch {}
+  }
+
+  if (!canvas || !ctx) return undefined;
+
+  // If actual scroll completed before total estimated height, trim excess bottom space
+  let finalCanvas: HTMLCanvasElement = canvas;
+  const actualRenderedH = Math.min(canvasH, Math.round((capturedCssY / metrics.totalH) * canvasH));
+  if (actualRenderedH > 0 && actualRenderedH < canvasH) {
+    const trimmed = document.createElement("canvas");
+    trimmed.width = canvasW;
+    trimmed.height = actualRenderedH;
+    const tctx = trimmed.getContext("2d");
+    if (tctx) {
+      tctx.drawImage(canvas, 0, 0, canvasW, actualRenderedH, 0, 0, canvasW, actualRenderedH);
+      finalCanvas = trimmed;
     }
   }
 
-  if (!canvas) return undefined;
-  const useWebp = canvas.width <= WEBP_MAX_DIM && canvas.height <= WEBP_MAX_DIM;
-  const blob = await canvasToBlob(canvas, useWebp ? "image/webp" : "image/jpeg", 0.92);
-  return blob ? { blob, width: canvas.width, height: canvas.height } : undefined;
+  const useWebp = finalCanvas.width <= WEBP_MAX_DIM && finalCanvas.height <= WEBP_MAX_DIM;
+  const blob = await canvasToBlob(finalCanvas, useWebp ? "image/webp" : "image/jpeg", 0.92);
+  return blob ? { blob, width: finalCanvas.width, height: finalCanvas.height } : undefined;
 }
 
 // Save the page as a single-file MHTML web archive
@@ -330,8 +423,7 @@ export async function captureTabAssets(
   if (mhtml) result.mhtml = await captureMhtml(tab.id);
 
   if (fullPage) {
-    result.fullPage =
-      (await captureFullPageViaDebugger(tab.id)) || (await captureFullPageViaScrolling(tab.id, tab.windowId));
+    result.fullPage = await captureFullPage(tab.id, tab.windowId);
   }
 
   if (result.fullPage) {
