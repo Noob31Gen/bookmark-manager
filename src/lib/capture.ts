@@ -48,11 +48,25 @@ function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number):
   return new Promise((resolve) => canvas.toBlob((b) => resolve(b), type, quality));
 }
 
-async function execInTab<T>(tabId: number, func: (...args: any[]) => T | Promise<T>, args: any[] = []): Promise<T | undefined> {
+async function execInTab<T>(
+  tabId: number,
+  func: (...args: any[]) => T | Promise<T>,
+  args: any[] = [],
+  timeoutMs = 12000
+): Promise<T | undefined> {
   if (!chrome.scripting?.executeScript) return undefined;
   try {
-    const [res] = await chrome.scripting.executeScript({ target: { tabId }, func: func as any, args } as any);
-    return res?.result as T;
+    const execPromise = chrome.scripting.executeScript({
+      target: { tabId },
+      func: func as any,
+      args,
+    } as any).then(([res]) => res?.result as T);
+
+    const timeoutPromise = new Promise<undefined>((resolve) =>
+      setTimeout(() => resolve(undefined), timeoutMs)
+    );
+
+    return await Promise.race([execPromise, timeoutPromise]);
   } catch {
     return undefined;
   }
@@ -122,13 +136,33 @@ export async function createThumbnail(
   }
 }
 
-function captureVisibleTabPng(windowId?: number): Promise<string | undefined> {
+function captureVisibleTabPng(windowId?: number, timeoutMs = 6000): Promise<string | undefined> {
   return new Promise((resolve) => {
     if (!chrome.tabs?.captureVisibleTab) return resolve(undefined);
-    chrome.tabs.captureVisibleTab(windowId as any, { format: "png" }, (dataUrl) => {
-      if (chrome.runtime.lastError || !dataUrl) resolve(undefined);
-      else resolve(dataUrl);
-    });
+    let finished = false;
+    const timer = setTimeout(() => {
+      if (!finished) {
+        finished = true;
+        resolve(undefined);
+      }
+    }, timeoutMs);
+
+    try {
+      chrome.tabs.captureVisibleTab(windowId as any, { format: "png" }, (dataUrl) => {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          if (chrome.runtime.lastError || !dataUrl) resolve(undefined);
+          else resolve(dataUrl);
+        }
+      });
+    } catch {
+      if (!finished) {
+        finished = true;
+        clearTimeout(timer);
+        resolve(undefined);
+      }
+    }
   });
 }
 
@@ -396,17 +430,38 @@ async function captureFullPage(tabId: number, windowId?: number): Promise<FullPa
   return blob ? { blob, width: finalCanvas.width, height: finalCanvas.height } : undefined;
 }
 
-// Save the page as a single-file MHTML web archive
-export function captureMhtml(tabId: number): Promise<Blob | undefined> {
+// Save the page as a single-file MHTML web archive with timeout
+export function captureMhtml(tabId: number, timeoutMs = 15000): Promise<Blob | undefined> {
   return new Promise((resolve) => {
     if (!chrome.pageCapture?.saveAsMHTML) return resolve(undefined);
+
+    let finished = false;
+    const timer = setTimeout(() => {
+      if (!finished) {
+        finished = true;
+        console.warn(`[captureMhtml] Timed out after ${timeoutMs}ms for tab ${tabId}`);
+        resolve(undefined);
+      }
+    }, timeoutMs);
+
     try {
       chrome.pageCapture.saveAsMHTML({ tabId }, (data) => {
-        if (chrome.runtime.lastError || !data) resolve(undefined);
-        else resolve(data as Blob);
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          if (chrome.runtime.lastError || !data) {
+            resolve(undefined);
+          } else {
+            resolve(data as Blob);
+          }
+        }
       });
     } catch {
-      resolve(undefined);
+      if (!finished) {
+        finished = true;
+        clearTimeout(timer);
+        resolve(undefined);
+      }
     }
   });
 }
@@ -686,54 +741,46 @@ export async function captureBookmarkUrlScreenshot(
   if (!url || !url.startsWith("http")) return undefined;
 
   let temporaryTabId: number | undefined;
-  let currentTab: chrome.tabs.Tab | undefined;
+  let managerTabId: number | undefined;
 
   try {
-    // 1. Check if the user already has a tab open with this bookmark's URL
-    const allTabs = await new Promise<chrome.tabs.Tab[]>((resolve) => {
-      chrome.tabs.query({}, (tabs) => resolve(tabs || []));
-    });
-
-    const targetDomain = new URL(url).hostname;
-    const existingTab = allTabs.find(
-      (t) => t.url && (t.url === url || (t.url.includes(targetDomain) && !t.url.startsWith("chrome://")))
-    );
-
-    [currentTab] = await new Promise<chrome.tabs.Tab[]>((resolve) => {
+    const [currentTab] = await new Promise<chrome.tabs.Tab[]>((resolve) => {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => resolve(tabs || []));
     });
+    managerTabId = currentTab?.id;
+    const currentWindowId = currentTab?.windowId;
 
-    let target: chrome.tabs.Tab;
+    // Open a temporary foreground tab in the current window to ensure proper painting and capture
+    const newTab = await new Promise<chrome.tabs.Tab>((resolve, reject) => {
+      chrome.tabs.create(
+        { url, active: true, windowId: currentWindowId },
+        (tab) => {
+          if (chrome.runtime.lastError || !tab) {
+            reject(chrome.runtime.lastError || new Error("Failed to create tab"));
+          } else {
+            resolve(tab);
+          }
+        }
+      );
+    });
 
-    if (existingTab && existingTab.id && existingTab.windowId !== undefined) {
-      // Temporarily activate existing tab to take the snapshot
-      await new Promise<void>((resolve) => {
-        chrome.tabs.update(existingTab.id!, { active: true }, () => resolve());
-      });
-      await sleep(600); // allow render settle
-      target = existingTab;
-    } else {
-      // 2. Open a temporary visible tab to load the bookmark's actual page
-      const newTab = await new Promise<chrome.tabs.Tab>((resolve) => {
-        chrome.tabs.create({ url, active: true }, (tab) => resolve(tab));
-      });
-      if (!newTab || !newTab.id || newTab.windowId === undefined) return undefined;
-      temporaryTabId = newTab.id;
+    if (!newTab || !newTab.id) return undefined;
+    temporaryTabId = newTab.id;
+    const tabWindowId = newTab.windowId ?? currentWindowId;
 
-      const loaded = await waitForTabComplete(newTab.id, 20000);
-      if (!loaded) return undefined;
+    const loaded = await waitForTabComplete(newTab.id, 20000);
+    if (!loaded) return undefined;
 
-      // Give dynamic images & web fonts time to render
-      await sleep(900);
-      target = await chrome.tabs.get(newTab.id).catch(() => newTab);
-    }
+    // Give dynamic images & web fonts time to render
+    await sleep(900);
+    const target = await chrome.tabs.get(newTab.id).catch(() => newTab);
 
     const extracted = await extractTabDomMetadata(target.id!);
     if (!extracted.favicon && target.favIconUrl) {
       extracted.favicon = target.favIconUrl;
     }
 
-    const result = await captureTabAssets({ id: target.id!, windowId: target.windowId });
+    const result = await captureTabAssets({ id: target.id!, windowId: tabWindowId });
     if (!result.screenshot) return undefined;
 
     if (bookmarkId) {
@@ -766,8 +813,12 @@ export async function captureBookmarkUrlScreenshot(
         await chrome.tabs.remove(temporaryTabId);
       } catch {}
     }
-    if (currentTab?.id) {
-      chrome.tabs.update(currentTab.id, { active: true }, () => void chrome.runtime.lastError);
+    if (managerTabId) {
+      try {
+        await new Promise<void>((resolve) => {
+          chrome.tabs.update(managerTabId!, { active: true }, () => resolve());
+        });
+      } catch {}
     }
   }
 }

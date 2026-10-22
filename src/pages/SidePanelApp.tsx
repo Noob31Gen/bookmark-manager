@@ -480,7 +480,7 @@ export function SidePanelApp() {
           setEditModalOpen(true);
         }}
         onRefetchSingle={handleRefetchSingle}
-        onCaptureArchive={async (b) => { if (b.url) { await captureBookmarkUrlScreenshot(b.url, b.id); refreshData(); } }}
+        onCaptureArchive={async (b) => { if (b.url) { await captureBookmarkUrlScreenshot(b.url, b.id); await refreshData(); } }}
       />
 
       {/* Edit Modal */}

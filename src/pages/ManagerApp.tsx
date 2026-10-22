@@ -621,7 +621,7 @@ export function ManagerApp() {
       bookmark.id,
       preferences.autoUpdateChromeBookmarkTitles
     );
-    refreshData();
+    await refreshData();
   };
 
   const handleCreateFolder = async (e: React.FormEvent) => {
