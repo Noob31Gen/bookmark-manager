@@ -12,3 +12,18 @@ Also it sync's to github with PAT. Everything.
 I'm also uploading the dist cause I'm too lazy to do build and releases now. 
 
 (Full Disclosure: Made with ai assistance.)
+
+Build:
+
+`npm i
+npm run build`
+
+Outputs to `dist`.
+
+Pack Extension:
+
+`node pack-ext.cjs`
+
+Packs extension from `dist` and uses existing `key.pem` in root or creates one.
+
+Outputs to `extension.crx`.
