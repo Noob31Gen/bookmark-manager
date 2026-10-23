@@ -4,7 +4,8 @@
  * UTF-8 Base64 encoding/decoding, Git Data API batching with Contents API fallback,
  * and cross-machine bookmark restoration.
  */
-import { GitHubConfig, EnhancedBookmark, BookmarkMetadata, FolderNode, UserPreferences } from "./types";
+import { GitHubConfig, EnhancedBookmark, BookmarkMetadata, FolderNode, UserPreferences, ArchiveSummary } from "./types";
+import { getArchive, putArchive } from "./archiveStore";
 import {
   saveGitHubConfig,
   getAllMetadata,
@@ -233,6 +234,7 @@ function isVaultManagedPath(path: string): boolean {
   return (
     path.startsWith("bookmarks/") ||
     path.startsWith("assets/screenshots/") ||
+    path.startsWith("assets/archives/") ||
     path.startsWith(".noob31/") ||
     path === "README.md" ||
     path === "bookmarks-vault.json"
@@ -409,7 +411,14 @@ export async function testGitHubConnection(
 export function generateMarkdownReadme(
   bookmarks: EnhancedBookmark[],
   folderMap: Record<string, string>,
-  stats?: { screenshotsCommitted: number; screenshotsPending: number }
+  stats?: {
+    screenshotsCommitted: number;
+    screenshotsPending: number;
+    fullPageCommitted?: number;
+    fullPagePending?: number;
+    mhtmlCommitted?: number;
+    mhtmlPending?: number;
+  }
 ): string {
   const dateStr = new Date().toLocaleString();
   const total = bookmarks.length;
@@ -473,6 +482,13 @@ export function generateMarkdownReadme(
       ? `Saved in \`assets/screenshots/\` (${stats.screenshotsPending} queued for next sync)`
       : "Saved in `assets/screenshots/`";
 
+  const archiveDetails = (pending?: number) =>
+    pending && pending > 0
+      ? `Saved in \`assets/archives/\` (${pending} queued for next sync)`
+      : "Saved in `assets/archives/`";
+  const fullPageCount = stats?.fullPageCommitted ?? bookmarks.filter((b) => b.archive?.fullPageBytes).length;
+  const mhtmlCount = stats?.mhtmlCommitted ?? bookmarks.filter((b) => b.archive?.mhtmlBytes).length;
+
   let md = `# 📑 Personal Bookmarks Vault\n\n`;
   md += `> Automatically synchronized and version-controlled with [Noob31 Bookmark Vault](https://noob31.com)\n\n`;
 
@@ -482,6 +498,8 @@ export function generateMarkdownReadme(
   md += `| 🔖 **Total Bookmarks** | **${total}** | Across ${Object.keys(folderCounts).length} folders |\n`;
   md += `| ⭐ **Starred / Favorites** | **${starred}** | ${total > 0 ? Math.round((starred / total) * 100) : 0}% of vault |\n`;
   md += `| 📸 **Visual Snapshots** | **${withScreenshots}** | ${snapshotDetails} |\n`;
+  md += `| 🖼️ **Full-Page Images** | **${fullPageCount}** | ${archiveDetails(stats?.fullPagePending)} |\n`;
+  md += `| 🗃️ **MHTML Page Snapshots** | **${mhtmlCount}** | ${archiveDetails(stats?.mhtmlPending)} |\n`;
   md += `| 🏷️ **Tagged Items** | **${withTags}** | ${Object.keys(tagCounts).length} unique tags |\n`;
   md += `| 📝 **Annotated Notes** | **${withNotes}** | With descriptions/notes |\n`;
   md += `| 🕒 **Last Synchronized** | \`${dateStr}\` | Automated Git snapshot |\n\n`;
@@ -527,6 +545,7 @@ export function generateMarkdownReadme(
   md += `- **\`.noob31/vault-index.json\`**: Complete structured database (bookmarks, folders, metadata, reader content & settings) for rapid cross-device synchronization and restoration.\n`;
   md += `- **\`bookmarks/\`**: Individual JSON definitions categorized by folder structure.\n`;
   md += `- **\`assets/screenshots/\`**: Viewport snapshots and visual assets for saved pages.\n`;
+  md += `- **\`assets/archives/\`**: Full-page screenshots and MHTML page snapshots.\n`;
 
   return md;
 }
@@ -769,12 +788,120 @@ export interface SyncProgress {
 }
 
 const SCREENSHOT_UPLOAD_BUDGET_MS = IS_SERVICE_WORKER ? 3 * 60_000 : 5 * 60_000;
+const MAX_SYNC_ROUNDS = 50;
+const MAX_TOTAL_RATE_LIMIT_WAIT_MS = 30 * 60_000;
+const MAX_BRANCH_CONFLICT_RETRIES = 3;
 
-// --- Push Complete Bookmark Vault to GitHub ---
+interface SyncPassResult {
+  success: boolean;
+  message: string;
+  timestamp: number;
+  pending?: number; // binary assets still waiting for upload after this pass
+  retryAfterMs?: number; // set when GitHub rate limiting cut the pass short
+  rateLimited?: boolean; // the pass failed outright because of rate limiting
+  conflict?: boolean; // the branch moved while committing
+}
+
+class BranchMovedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BranchMovedError";
+  }
+}
+
+/** Sleeps in short slices and pings an extension API so an MV3 service worker isn't torn down mid-wait. */
+async function keepAliveSleep(ms: number, onTick?: (remainingMs: number) => void): Promise<void> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    onTick?.(end - Date.now());
+    await sleep(Math.min(IS_SERVICE_WORKER ? 20_000 : 5_000, end - Date.now()));
+    try {
+      if (typeof chrome !== "undefined" && chrome.runtime?.getPlatformInfo) await chrome.runtime.getPlatformInfo();
+    } catch {}
+  }
+}
+
+// --- Push Complete Bookmark Vault to GitHub (keeps committing rounds until everything is uploaded) ---
 export async function syncVaultToGitHub(
   rawConfig: GitHubConfig,
   onProgress?: (progress: SyncProgress) => void
 ): Promise<{ success: boolean; message: string; timestamp: number }> {
+  const report = (p: SyncProgress) => {
+    try {
+      onProgress?.(p);
+    } catch {}
+  };
+
+  let round = 0;
+  let conflicts = 0;
+  let stalledRounds = 0;
+  let totalWaitedMs = 0;
+  let lastPending = Number.POSITIVE_INFINITY;
+  let last: SyncPassResult | null = null;
+  let stopReason = "";
+
+  while (round < MAX_SYNC_ROUNDS) {
+    round++;
+    const prefix = round > 1 ? `[Round ${round}] ` : "";
+    const res = await syncVaultPass(rawConfig, (p) => report({ ...p, message: prefix + p.message }));
+    last = res;
+
+    if (res.conflict) {
+      if (++conflicts > MAX_BRANCH_CONFLICT_RETRIES) break;
+      report({ phase: "preparing", message: "Branch changed on GitHub, rebasing and retrying..." });
+      await sleep(1500);
+      continue;
+    }
+    if (!res.success && !res.rateLimited) break;
+
+    const pending = res.pending ?? 0;
+    if (res.success && pending === 0) break;
+
+    if (res.success) {
+      stalledRounds = pending >= lastPending ? stalledRounds + 1 : 0;
+      lastPending = pending;
+      // No progress without a rate limit to wait out (e.g. permission errors) → retrying won't help
+      if (stalledRounds >= 2 || (stalledRounds >= 1 && !res.retryAfterMs)) {
+        stopReason = "uploads stopped making progress";
+        break;
+      }
+    }
+
+    const waitMs = res.retryAfterMs ? res.retryAfterMs + 1000 : 0;
+    if (waitMs > 0) {
+      if (totalWaitedMs + waitMs > MAX_TOTAL_RATE_LIMIT_WAIT_MS) {
+        stopReason = `GitHub rate limit resets in ~${Math.ceil(waitMs / 60_000)} min`;
+        break;
+      }
+      totalWaitedMs += waitMs;
+      await saveGitHubConfig({ syncStatus: "syncing" });
+      await keepAliveSleep(waitMs, (remaining) =>
+        report({
+          phase: "uploading",
+          message: `GitHub rate limit reached (${pending} files left). Resuming automatically in ${Math.ceil(remaining / 1000)}s...`,
+        })
+      );
+    }
+  }
+
+  const result = last || { success: false, message: "Sync did not run.", timestamp: Date.now() };
+  let message = result.message;
+  if (result.conflict) {
+    message += " Retried several times, but the branch kept changing. Please try again shortly.";
+    await saveGitHubConfig({ syncStatus: "error", lastSyncError: message });
+  }
+  if (result.success && round > 1) message += ` Completed in ${round} commit rounds.`;
+  if (result.success && (result.pending ?? 0) > 0) {
+    message += ` Stopped auto-resuming${stopReason ? ` (${stopReason})` : ""}; the remaining files will upload on the next sync.`;
+  }
+  return { success: result.success, message, timestamp: result.timestamp };
+}
+
+// --- Single sync pass: upload what fits in this run's budget, then commit ---
+async function syncVaultPass(
+  rawConfig: GitHubConfig,
+  onProgress?: (progress: SyncProgress) => void
+): Promise<SyncPassResult> {
   const config = sanitizeGitHubConfig(rawConfig);
   if (!config.token || !config.owner || !config.repo) {
     return {
@@ -845,7 +972,26 @@ export async function syncVaultToGitHub(
 
     // 3. Plan screenshots: hash locally so unchanged images are never re-uploaded
     report({ phase: "screenshots", message: "Hashing screenshots..." });
-    type ShotPlan = { id: string; path: string; sha: string; dataUrl: string };
+    type ArchiveKind = "fullPage" | "mhtml";
+    type ShotPlan = {
+      id: string;
+      path: string;
+      sha: string;
+      dataUrl?: string;
+      kind?: ArchiveKind;
+      mime?: string;
+      size?: number;
+      getBase64?: () => Promise<string | null>;
+    };
+    type ArchiveFileRef = { path: string; sha: string; mime: string; bytes: number };
+    type ArchiveRefEntry = {
+      capturedAt: number;
+      width?: number;
+      height?: number;
+      fullPage?: ArchiveFileRef;
+      mhtml?: ArchiveFileRef;
+    };
+    const archiveRefs = new Map<string, ArchiveRefEntry>();
     const screenshotRefs = new Map<string, { path: string; sha: string }>();
     const shotsToVerify: ShotPlan[] = [];
     const shotsToUpload: ShotPlan[] = [];
@@ -880,6 +1026,54 @@ export async function syncVaultToGitHub(
       }
     });
 
+    // 3b. Plan page archives (full-page screenshot + MHTML from IndexedDB)
+    const bookmarksWithArchives = flatList.filter((b) => !!b.archive);
+    let fullPageLocal = 0;
+    let mhtmlLocal = 0;
+    if (bookmarksWithArchives.length > 0) {
+      report({ phase: "screenshots", message: "Hashing page archives..." });
+      await runWithConcurrency(bookmarksWithArchives, 2, async (b) => {
+        const archive = await getArchive(b.id);
+        if (!archive || (!archive.fullPage && !archive.mhtml)) return;
+        const entry: ArchiveRefEntry = {
+          capturedAt: archive.capturedAt,
+          width: archive.fullPageWidth,
+          height: archive.fullPageHeight,
+        };
+        archiveRefs.set(b.id, entry);
+        if (archive.fullPage?.size) fullPageLocal++;
+        if (archive.mhtml?.size) mhtmlLocal++;
+        const kinds: ArchiveKind[] = ["fullPage", "mhtml"];
+        for (const kind of kinds) {
+          const blob = archive[kind];
+          if (!blob || !blob.size) continue;
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          const mime = kind === "mhtml" ? blob.type || "multipart/related" : (blob.type || "image/png").toLowerCase();
+          const ext = kind === "mhtml" ? "mhtml" : IMAGE_MIME_TO_EXT[mime] || "png";
+          const path = `assets/archives/${sanitizePathSegment(b.id)}/${kind === "mhtml" ? "page" : "fullpage"}.${ext}`;
+          const sha = await gitBlobSha(bytes);
+          if (remoteShaSet.has(sha)) {
+            entry[kind] = { path, sha, mime, bytes: bytes.length };
+          } else {
+            const id = b.id;
+            shotsToUpload.push({
+              id,
+              path,
+              sha,
+              kind,
+              mime,
+              size: bytes.length,
+              // Re-read lazily so multi-MB archives are not all held in memory at once
+              getBase64: async () => {
+                const fresh = (await getArchive(id))?.[kind];
+                return fresh ? bytesToBase64(new Uint8Array(await fresh.arrayBuffer())) : null;
+              },
+            });
+          }
+        }
+      });
+    }
+
     // Blobs uploaded by earlier (failed) syncs usually still exist even though they were never committed
     if (shotsToVerify.length > 0) {
       let verified = 0;
@@ -902,6 +1096,7 @@ export async function syncVaultToGitHub(
     // 4. Upload genuinely new screenshots (paced for GitHub's secondary rate limits, time-boxed per run)
     let screenshotsPending = 0;
     let screenshotHaltReason: string | null = null;
+    let rateLimitRetryMs = 0;
     if (shotsToUpload.length > 0) {
       const deadline = Date.now() + SCREENSHOT_UPLOAD_BUDGET_MS;
       let processed = 0;
@@ -911,15 +1106,20 @@ export async function syncVaultToGitHub(
           return;
         }
         try {
-          const base64 = dataUrlToBase64(s.dataUrl);
+          const base64 = s.getBase64 ? await s.getBase64() : s.dataUrl ? dataUrlToBase64(s.dataUrl) : null;
           if (!base64) return;
           const data = await githubWrite(config.token, `/repos/${repoPath}/git/blobs`, {
             content: base64,
             encoding: "base64",
           });
           if (isValidGitSha(data?.sha)) {
-            screenshotRefs.set(s.id, { path: s.path, sha: data.sha });
-            metadataUpdates[s.id] = { githubSha: data.sha };
+            if (s.kind) {
+              const entry = archiveRefs.get(s.id);
+              if (entry) entry[s.kind] = { path: s.path, sha: data.sha, mime: s.mime || "", bytes: s.size || 0 };
+            } else {
+              screenshotRefs.set(s.id, { path: s.path, sha: data.sha });
+              metadataUpdates[s.id] = { githubSha: data.sha };
+            }
           } else {
             screenshotsPending++;
           }
@@ -927,6 +1127,7 @@ export async function syncVaultToGitHub(
           screenshotsPending++;
           if (err instanceof GitHubRateLimitError) {
             screenshotHaltReason = err.message;
+            rateLimitRetryMs = Math.max(rateLimitRetryMs, err.retryAfterMs);
           } else if (err instanceof GitHubApiError && [403, 404].includes(err.status)) {
             screenshotHaltReason = err.message; // Permission problem: every upload would fail
           } else if (String(err?.message || "").includes("401")) {
@@ -937,7 +1138,7 @@ export async function syncVaultToGitHub(
         processed++;
         report({
           phase: "screenshots",
-          message: `Uploading screenshots ${processed}/${shotsToUpload.length}...`,
+          message: `Uploading screenshots & archives ${processed}/${shotsToUpload.length}...`,
           current: processed,
           total: shotsToUpload.length,
         });
@@ -954,6 +1155,22 @@ export async function syncVaultToGitHub(
 
     // 5. Build every vault file
     report({ phase: "uploading", message: "Preparing vault files..." });
+
+    // Only archives with at least one committed file are published
+    const committedArchives: Record<string, ArchiveRefEntry> = {};
+    let archiveFileCount = 0;
+    let fullPageCommitted = 0;
+    let mhtmlCommitted = 0;
+    for (const [id, entry] of archiveRefs) {
+      if (!entry.fullPage && !entry.mhtml) continue;
+      committedArchives[id] = entry;
+      if (entry.fullPage) fullPageCommitted++;
+      if (entry.mhtml) mhtmlCommitted++;
+    }
+    archiveFileCount = fullPageCommitted + mhtmlCommitted;
+    const fullPagePending = Math.max(0, fullPageLocal - fullPageCommitted);
+    const mhtmlPending = Math.max(0, mhtmlLocal - mhtmlCommitted);
+    const viewportScreenshotsPending = Math.max(0, screenshotsPending - fullPagePending - mhtmlPending);
 
     const toCloudBookmark = (b: EnhancedBookmark, includeReaderContent: boolean) => {
       const ref = screenshotRefs.get(b.id);
@@ -984,6 +1201,8 @@ export async function syncVaultToGitHub(
         screenshot: ref?.path,
         githubSha: ref?.sha,
         screenshotPending: b.screenshot && !ref ? true : undefined,
+        archive: b.archive,
+        archiveFiles: committedArchives[b.id],
         readerContent: includeReaderContent ? b.readerContent : undefined,
       };
     };
@@ -1006,12 +1225,18 @@ export async function syncVaultToGitHub(
       bookmarkCount: flatList.length,
       folderCount: Object.keys(folderMap).length,
       screenshotCount: screenshotRefs.size,
-      screenshotsPending,
+      archiveCount: Object.keys(committedArchives).length,
+      screenshotsPending: viewportScreenshotsPending,
+      fullPageCount: fullPageCommitted,
+      fullPagePending,
+      mhtmlCount: mhtmlCommitted,
+      mhtmlPending,
       folderMap,
       folderTree,
       // Reader content lives once in `metadata` to keep the index lean
       bookmarks: flatList.map((b) => toCloudBookmark(b, false)),
       metadata: cloudMetadata,
+      archives: committedArchives,
       settings,
     };
 
@@ -1019,7 +1244,11 @@ export async function syncVaultToGitHub(
     const indexJson = JSON.stringify(vaultIndex, null, 2);
     const readmeContent = generateMarkdownReadme(flatList, folderMap, {
       screenshotsCommitted: screenshotRefs.size,
-      screenshotsPending,
+      screenshotsPending: viewportScreenshotsPending,
+      fullPageCommitted,
+      fullPagePending,
+      mhtmlCommitted,
+      mhtmlPending,
     });
     files.set(".noob31/vault-index.json", indexJson);
     files.set("README.md", readmeContent);
@@ -1070,6 +1299,14 @@ export async function syncVaultToGitHub(
       if (remoteBlobByPath.get(ref.path) !== ref.sha) changedFiles++;
     }
 
+    for (const entry of Object.values(committedArchives)) {
+      for (const ref of [entry.fullPage, entry.mhtml]) {
+        if (!ref) continue;
+        entries.push({ path: ref.path, mode: "100644", type: "blob", sha: ref.sha });
+        if (remoteBlobByPath.get(ref.path) !== ref.sha) changedFiles++;
+      }
+    }
+
     const vaultPaths = new Set(entries.map((e) => e.path));
     for (const item of preservedEntries) {
       if (!vaultPaths.has(item.path)) entries.push(item);
@@ -1089,7 +1326,7 @@ export async function syncVaultToGitHub(
     // 8. Create the commit
     report({ phase: "committing", message: "Creating commit..." });
     const commitData = await githubWrite(config.token, `/repos/${repoPath}/git/commits`, {
-      message: `[Vault Sync] Synchronized ${flatList.length} bookmarks, ${screenshotRefs.size} screenshots across ${Object.keys(folderMap).length} folders (${new Date().toLocaleDateString()})`,
+      message: `[Vault Sync] Synchronized ${flatList.length} bookmarks, ${screenshotRefs.size} screenshots, ${archiveFileCount} archive files across ${Object.keys(folderMap).length} folders (${new Date().toLocaleDateString()})`,
       tree: treeSha,
       parents: parentCommitSha ? [parentCommitSha] : [],
     });
@@ -1121,7 +1358,7 @@ export async function syncVaultToGitHub(
           throw new Error(`Failed to create branch "${targetBranch}" (${createRefRes.status}): ${createErr.message || createRefRes.statusText}`);
         }
       } else if (/fast.?forward/i.test(refMessage)) {
-        throw new Error(`Branch "${targetBranch}" changed on GitHub while syncing. Please run the sync again.`);
+        throw new BranchMovedError(`Branch "${targetBranch}" changed on GitHub while syncing.`);
       } else {
         throw new Error(`Failed to update branch "${targetBranch}" (${updateRefRes.status}): ${refMessage}`);
       }
@@ -1137,7 +1374,7 @@ export async function syncVaultToGitHub(
 
     const notes: string[] = [];
     if (screenshotsPending > 0) {
-      notes.push(`${screenshotsPending} screenshots queued for the next sync (${screenshotHaltReason || "GitHub rate limit"})`);
+      notes.push(`${screenshotsPending} screenshots/archive files still pending (${screenshotHaltReason || "GitHub rate limit"})`);
     }
     if (failed.length > 0) {
       notes.push(`${failed.length} files rejected by GitHub: ${failed.slice(0, 3).map((f) => f.path).join(", ")}${failed.length > 3 ? "..." : ""}`);
@@ -1146,13 +1383,24 @@ export async function syncVaultToGitHub(
     return {
       success: true,
       message:
-        `Pushed ${flatList.length} bookmarks, ${screenshotRefs.size} screenshots & ${Object.keys(folderMap).length} folders to ${config.owner}/${config.repo} (${changedFiles} files changed).` +
+        `Pushed ${flatList.length} bookmarks, ${screenshotRefs.size} screenshots, ${archiveFileCount} archive files & ${Object.keys(folderMap).length} folders to ${config.owner}/${config.repo} (${changedFiles} files changed).` +
         (notes.length > 0 ? ` ${notes.join(". ")}.` : ""),
       timestamp,
+      pending: screenshotsPending,
+      retryAfterMs: rateLimitRetryMs || undefined,
     };
   } catch (err: any) {
     let errorMsg = err?.message || "Failed to sync to GitHub";
     console.error("GitHub vault sync failed:", err);
+
+    // Recoverable: the caller retries these automatically, so don't write a safety snapshot yet
+    if (err instanceof BranchMovedError) {
+      return { success: false, message: errorMsg, timestamp: Date.now(), conflict: true };
+    }
+    if (err instanceof GitHubRateLimitError) {
+      await saveGitHubConfig({ ...config, syncStatus: "error", lastSyncError: errorMsg });
+      return { success: false, message: errorMsg, timestamp: Date.now(), rateLimited: true, retryAfterMs: err.retryAfterMs };
+    }
 
     // Safety net: at least persist the complete index so nothing is lost, but report the failure honestly
     if (safetySnapshot) {
@@ -1498,6 +1746,20 @@ export async function pullVaultFromGitHub(
     const metadataUpdates: Record<string, Partial<BookmarkMetadata>> = {};
     const imageDownloadTasks: Array<{ targetId: string; blobSha: string; mime: string }> = [];
 
+    // 0. Recreate the full folder structure (including empty folders), shallowest first
+    if (options.restoreBookmarks) {
+      const folderPaths = Array.from(new Set(Object.values(remoteFolderMap).filter(Boolean))).sort(
+        (a, b) => a.split("/").length - b.split("/").length
+      );
+      for (const folderPath of folderPaths) {
+        try {
+          await ensureChromeFolderPath(folderPath);
+        } catch (folderErr) {
+          console.warn(`Could not restore folder ${folderPath}:`, folderErr);
+        }
+      }
+    }
+
     // 1. Reconcile Bookmarks (Restore missing to Chrome + map to local target)
     const reconciledItems: Array<{ targetId: string; remoteBm: any; remoteMeta: BookmarkMetadata }> = [];
 
@@ -1601,6 +1863,50 @@ export async function pullVaultFromGitHub(
       });
     }
 
+    // 2b. Restore page archives (full-page screenshot + MHTML) into IndexedDB
+    const remoteArchives: Record<string, any> = vaultIndex.archives || {};
+    const restoredArchiveSummaries = new Map<string, ArchiveSummary>();
+    let restoredArchivesCount = 0;
+    const fetchArchiveBlob = async (ref: any): Promise<Blob | undefined> => {
+      if (!ref || !isValidGitSha(ref.sha)) return undefined;
+      const res = await githubRequest(config.token, `/repos/${repoPath}/git/blobs/${ref.sha}`);
+      if (!res.ok) return undefined;
+      const data = await res.json();
+      if (!data.content) return undefined;
+      return new Blob([base64ToBytes(data.content) as BlobPart], { type: ref.mime || "" });
+    };
+    const archiveTasks = reconciledItems.filter((i) => remoteArchives[i.remoteBm.id]);
+    await runWithConcurrency(archiveTasks, 2, async ({ targetId, remoteBm }) => {
+      const ra = remoteArchives[remoteBm.id];
+      try {
+        const local = await getArchive(targetId);
+        if (local && (local.fullPage || local.mhtml) && (local.capturedAt || 0) >= (ra.capturedAt || 0)) return;
+        const [fullPage, mhtml] = await Promise.all([fetchArchiveBlob(ra.fullPage), fetchArchiveBlob(ra.mhtml)]);
+        if (!fullPage && !mhtml) return;
+        const capturedAt = ra.capturedAt || Date.now();
+        await putArchive({
+          id: targetId,
+          url: remoteBm.url,
+          title: remoteBm.title,
+          capturedAt,
+          fullPage,
+          fullPageWidth: ra.width,
+          fullPageHeight: ra.height,
+          mhtml,
+        });
+        restoredArchiveSummaries.set(targetId, {
+          capturedAt,
+          fullPageBytes: fullPage?.size,
+          fullPageWidth: ra.width,
+          fullPageHeight: ra.height,
+          mhtmlBytes: mhtml?.size,
+        });
+        restoredArchivesCount++;
+      } catch (archiveErr) {
+        console.warn(`Could not restore page archive for bookmark ${targetId}:`, archiveErr);
+      }
+    });
+
     // 3. Merge All Metadata Fields (Tags, Notes, Diagnostics, Stars, Screenshots)
     for (const item of reconciledItems) {
       const { targetId, remoteBm, remoteMeta } = item;
@@ -1648,6 +1954,7 @@ export async function pullVaultFromGitHub(
         lastCaptured: finalScreenshot
           ? (existingLocal.lastCaptured || remoteBm.lastCaptured || remoteMeta.lastCaptured || Date.now())
           : undefined,
+        archive: restoredArchiveSummaries.get(targetId) || existingLocal.archive,
       };
 
       updatedCount++;
@@ -1688,6 +1995,7 @@ export async function pullVaultFromGitHub(
     if (createdCount > 0) parts.push(`restored ${createdCount} bookmarks`);
     if (updatedCount > 0) parts.push(`synced metadata for ${updatedCount} items`);
     if (downloadedImagesCount > 0) parts.push(`downloaded ${downloadedImagesCount} screenshots`);
+    if (restoredArchivesCount > 0) parts.push(`restored ${restoredArchivesCount} page archives`);
     if (restoredSettings) parts.push("restored settings");
 
     const summaryMsg = parts.length > 0

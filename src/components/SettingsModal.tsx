@@ -78,12 +78,16 @@ export function SettingsModal({
   const [isSyncingTitles, setIsSyncingTitles] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
 
+  // Reset only when the modal opens. Depending on `config` would wipe status messages (and unsaved edits)
+  // every time the parent reloads config after a test/save/push/pull.
   useEffect(() => {
+    if (!isOpen) return;
     setFormData(config);
     getUserPreferences().then((p) => setPreferences(p));
     setTestResult(null);
     setSyncFeedback(null);
-  }, [config, isOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   const handleTestConnection = async () => {
     const cleanConfig = sanitizeGitHubConfig(formData);
